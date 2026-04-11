@@ -340,4 +340,534 @@
         </div>
         <div class="stat-row">
           <span class="label">Events scored</span>
-          <span class="value">{{ backtest_summary.total }}
+          <span class="value">{{ backtest_summary.total }}</span>
+        </div>
+      {% endif %}
+    </div>
+
+  </div>
+
+  <div class="section-title">Announcements by Category</div>
+  <div class="card">
+    <table>
+      <thead>
+        <tr><th>Code</th><th>Category Name</th><th>Count</th><th>Distribution</th></tr>
+      </thead>
+      <tbody>
+        {% for cat in categories %}
+        <tr>
+          <td><span class="cat-tag">{{ cat.category }}</span></td>
+          <td>{{ cat.headlinename or '—' }}</td>
+          <td>{{ cat.n }}</td>
+          <td>
+            <div class="score-bar-wrap">
+              <div class="score-bar">
+                <div class="score-bar-fill"
+                     style="width:{{ (cat.n/total_rns*100)|int }}%;background:#7eb8f7;">
+                </div>
+              </div>
+              <span style="font-size:0.75rem;color:#888;width:32px">
+                {{ "%.0f"|format(cat.n/total_rns*100) }}%
+              </span>
+            </div>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  {% if score_dist %}
+  <div class="section-title">LLM Score Distribution</div>
+  <div class="card">
+    <table>
+      <thead>
+        <tr><th>Score</th><th>Meaning</th><th>Count</th><th>Distribution</th></tr>
+      </thead>
+      <tbody>
+        {% set score_labels = {
+          2:'Strong positive (+2)', 1:'Mildly positive (+1)', 0:'Neutral (0)',
+          -1:'Mildly negative (-1)', -2:'Strong negative (-2)'} %}
+        {% set score_colors = {
+          2:'#4caf7d', 1:'#a8d8a8', 0:'#888', -1:'#f0a07a', -2:'#f07070'} %}
+        {% for row in score_dist %}
+        <tr>
+          <td><strong style="color:{{ score_colors[row.llm_score] }}">
+            {{ '+' if row.llm_score > 0 else '' }}{{ row.llm_score }}
+          </strong></td>
+          <td>{{ score_labels[row.llm_score] }}</td>
+          <td>{{ row.n }}</td>
+          <td>
+            <div class="score-bar-wrap">
+              <div class="score-bar">
+                <div class="score-bar-fill"
+                     style="width:{{ (row.n/backtest_count*100)|int }}%;
+                            background:{{ score_colors[row.llm_score] }}">
+                </div>
+              </div>
+              <span style="font-size:0.75rem;color:#888;width:32px">
+                {{ "%.0f"|format(row.n/backtest_count*100) }}%
+              </span>
+            </div>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+
+  <div class="section-title">Recent Announcements
+    <span style="color:#555;font-size:0.78rem;font-weight:400;margin-left:8px">
+      — click any row to read
+    </span>
+  </div>
+  <div class="card">
+    <table>
+      <thead>
+        <tr><th>Date</th><th>Cat</th><th>Title</th><th>Text size</th><th>Status</th></tr>
+      </thead>
+      <tbody>
+        {% for row in recent %}
+        <tr class="clickable" onclick="openDrawer({{ row.id }})">
+          <td style="white-space:nowrap;color:#888">{{ row.datetime[:16] }}</td>
+          <td><span class="cat-tag">{{ row.category }}</span></td>
+          <td>{{ row.title }}</td>
+          <td style="color:#888">
+            {% if row.body_len %}{{ "{:,}".format(row.body_len) }} chars
+            {% else %}—{% endif %}
+          </td>
+          <td>
+            <span class="badge {{ 'ok' if row.fetch_status=='ok' else 'warn' }}">
+              {{ row.fetch_status }}
+            </span>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+</div><!-- /panel-summary -->
+
+
+<!-- ══════════════════════════════════════════ TAB 2: PRICE CHART -->
+<div id="panel-chart" class="panel">
+
+  <div id="chart-container">
+    <div id="chart-loading">Loading chart data...</div>
+    <div id="price-chart" style="display:none"></div>
+    <div class="legend-row" id="chart-legend"></div>
+  </div>
+
+  <div class="section-title">All Announcements with Price Context
+    <span style="color:#555;font-size:0.78rem;font-weight:400;margin-left:8px">
+      — click any row to read
+    </span>
+  </div>
+  <div class="card">
+    <table id="rns-price-tbl">
+      <thead>
+        <tr>
+          <th>Date &amp; Time</th><th>Cat</th><th>Title</th>
+          <th>Price on day</th><th>Next day</th><th>+5 days</th>
+        </tr>
+      </thead>
+      <tbody id="rns-price-body">
+        <tr><td colspan="6" style="color:#555;text-align:center;padding:20px">
+          Loading...
+        </td></tr>
+      </tbody>
+    </table>
+  </div>
+
+</div><!-- /panel-chart -->
+
+
+<!-- ══════════════════════════════════════════ DRAWER OVERLAY -->
+<div id="drawer-overlay" onclick="closeDrawer()"></div>
+
+<!-- ══════════════════════════════════════════ DRAWER -->
+<div id="drawer">
+
+  <div class="drawer-header">
+    <div class="drawer-header-left">
+      <div class="drawer-meta">
+        <span class="drawer-cat"  id="d-cat">—</span>
+        <span class="drawer-date" id="d-date">—</span>
+        <span class="drawer-rns"  id="d-rns">—</span>
+      </div>
+      <div class="drawer-title" id="d-title">Loading…</div>
+    </div>
+    <button class="drawer-close" onclick="closeDrawer()">✕</button>
+  </div>
+
+  <div class="drawer-prices">
+    <div class="price-cell">
+      <div class="pc-label">Price on day</div>
+      <div class="pc-value" id="d-p0">—</div>
+    </div>
+    <div class="price-cell">
+      <div class="pc-label">Next day</div>
+      <div class="pc-value" id="d-p1">—</div>
+      <div class="pc-ret"   id="d-r1">—</div>
+    </div>
+    <div class="price-cell">
+      <div class="pc-label">+5 days</div>
+      <div class="pc-value" id="d-p5">—</div>
+      <div class="pc-ret"   id="d-r5">—</div>
+    </div>
+    <div class="price-cell">
+      <div class="pc-label">+10 days</div>
+      <div class="pc-value" id="d-p10">—</div>
+      <div class="pc-ret"   id="d-r10">—</div>
+    </div>
+  </div>
+
+  <div class="drawer-score" id="d-score-strip">
+    <div class="score-pill" id="d-score-pill">0</div>
+    <div class="score-detail">
+      <div class="sd-conf"   id="d-conf">—</div>
+      <div class="sd-reason" id="d-reason">—</div>
+    </div>
+    <span class="trade-badge" id="d-trade-badge"></span>
+  </div>
+
+  <div class="drawer-body" id="drawer-body">
+    <div id="drawer-loading">Loading announcement…</div>
+  </div>
+
+</div>
+
+
+<script>
+// ── Tab switching ──────────────────────────────────────────────
+function switchTab(name, el) {
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+  el.classList.add('active');
+  document.getElementById('panel-' + name).classList.add('active');
+  if (name === 'chart' && !window._chartLoaded) loadChart();
+}
+
+// ── Drawer open/close ──────────────────────────────────────────
+function openDrawer(newsId) {
+  document.getElementById('drawer-overlay').classList.add('open');
+  document.getElementById('drawer').classList.add('open');
+  document.body.style.overflow = 'hidden';
+  loadDrawer(newsId);
+}
+
+function closeDrawer() {
+  document.getElementById('drawer-overlay').classList.remove('open');
+  document.getElementById('drawer').classList.remove('open');
+  document.body.style.overflow = '';
+}
+
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') closeDrawer();
+});
+
+// ── Load drawer content ────────────────────────────────────────
+function loadDrawer(newsId) {
+  // Reset
+  document.getElementById('d-title').textContent = 'Loading…';
+  document.getElementById('drawer-loading').style.display = 'block';
+  document.getElementById('drawer-loading').textContent = 'Loading announcement…';
+  document.getElementById('d-score-strip').classList.remove('visible');
+
+  fetch('/rns/' + newsId)
+    .then(r => r.json())
+    .then(data => populateDrawer(data))
+    .catch(e => {
+      document.getElementById('drawer-loading').textContent =
+        'Error loading: ' + e;
+    });
+}
+
+function populateDrawer(d) {
+  // Header
+  document.getElementById('d-cat').textContent  = d.category || '—';
+  document.getElementById('d-date').textContent = d.datetime
+    ? d.datetime.substring(0,16).replace('T', '  ') : '—';
+  document.getElementById('d-rns').textContent  = d.rnsnumber
+    ? 'RNS ' + d.rnsnumber : '';
+  document.getElementById('d-title').textContent = d.title || '—';
+
+  // Prices
+  const p = d.price || {};
+  document.getElementById('d-p0').textContent =
+    p.on_day ? p.on_day.toFixed(2) + 'p' : '—';
+
+  function setPriceCell(valId, retId, price, ret) {
+    document.getElementById(valId).textContent =
+      price ? price.toFixed(2) + 'p' : '—';
+    if (ret !== null && ret !== undefined) {
+      const sign = ret > 0 ? '+' : '';
+      const cls  = ret > 0 ? 'pos' : (ret < 0 ? 'neg' : '');
+      document.getElementById(retId).innerHTML =
+        `<span class="${cls}">${sign}${ret.toFixed(1)}%</span>`;
+    } else {
+      document.getElementById(retId).textContent = '—';
+    }
+  }
+  setPriceCell('d-p1',  'd-r1',  p.next1,  p.ret1);
+  setPriceCell('d-p5',  'd-r5',  p.next5,  p.ret5);
+  setPriceCell('d-p10', 'd-r10', p.next10, p.ret10);
+
+  // LLM score strip
+  if (d.backtest) {
+    const bt = d.backtest;
+    const strip = document.getElementById('d-score-strip');
+    strip.classList.add('visible');
+
+    const pill = document.getElementById('d-score-pill');
+    const score = bt.llm_score;
+    const sign = score > 0 ? '+' : '';
+    pill.textContent = sign + score;
+    pill.className = 'score-pill ' + (
+      score === 2  ? 'p2' : score === 1  ? 'p1' :
+      score === 0  ? 'z0' : score === -1 ? 'n1' : 'n2'
+    );
+
+    document.getElementById('d-conf').textContent =
+      'Confidence: ' + (bt.llm_confidence || '—');
+    document.getElementById('d-reason').textContent =
+      bt.llm_reason || '—';
+
+    const badge = document.getElementById('d-trade-badge');
+    if (bt.would_trade) {
+      const dir = bt.direction || '';
+      const out = bt.outcome_t15 || '';
+      badge.textContent = dir + (out ? ' → ' + out : '');
+      badge.className = 'trade-badge ' +
+        (out === 'WIN' ? 'win' : out === 'LOSS' ? 'loss' :
+         dir === 'BUY' ? 'buy' : 'sell');
+      badge.style.display = 'inline-block';
+    } else {
+      badge.style.display = 'none';
+    }
+  } else {
+    document.getElementById('d-score-strip').classList.remove('visible');
+  }
+
+  // Body text → formatted HTML
+  document.getElementById('drawer-loading').style.display = 'none';
+  const bodyEl = document.getElementById('drawer-body');
+
+  if (d.body_text) {
+    bodyEl.innerHTML = '<div class="rns-text">' +
+      formatRnsText(d.body_text) + '</div>';
+  } else {
+    bodyEl.innerHTML =
+      '<p style="color:#555;padding:20px 0">No body text available.</p>';
+  }
+}
+
+function formatRnsText(text) {
+  // Convert plain text to readable HTML
+  const lines = text.split('\n');
+  let html = '';
+  let inList = false;
+
+  lines.forEach(line => {
+    const t = line.trim();
+    if (!t) {
+      if (inList) { html += '</ul>'; inList = false; }
+      return;
+    }
+
+    // Bullet points
+    if (t.startsWith('·') || t.startsWith('•') || t.startsWith('-')) {
+      if (!inList) { html += '<ul>'; inList = true; }
+      html += '<li>' + escHtml(t.substring(1).trim()) + '</li>';
+      return;
+    }
+
+    if (inList) { html += '</ul>'; inList = false; }
+
+    // All-caps lines = section headings
+    if (t === t.toUpperCase() && t.length > 4 && /[A-Z]/.test(t)) {
+      html += '<h3>' + escHtml(t) + '</h3>';
+      return;
+    }
+
+    // Short bold-looking lines (likely sub-headings)
+    if (t.length < 80 && !t.endsWith('.') &&
+        t.split(' ').length < 10 &&
+        t === t.charAt(0).toUpperCase() + t.slice(1)) {
+      html += '<p><strong>' + escHtml(t) + '</strong></p>';
+      return;
+    }
+
+    html += '<p>' + escHtml(t) + '</p>';
+  });
+
+  if (inList) html += '</ul>';
+  return html;
+}
+
+function escHtml(s) {
+  return s.replace(/&/g,'&amp;')
+          .replace(/</g,'&lt;')
+          .replace(/>/g,'&gt;')
+          .replace(/"/g,'&quot;');
+}
+
+// ── Load chart data ────────────────────────────────────────────
+function loadChart() {
+  window._chartLoaded = true;
+  fetch('/chart-data')
+    .then(r => r.json())
+    .then(data => {
+      window._chartData = data;
+      renderChart(data);
+      renderRnsTable(data);
+    })
+    .catch(e => {
+      document.getElementById('chart-loading').textContent =
+        'Error: ' + e;
+    });
+}
+
+function renderChart(data) {
+  const prices    = data.prices;
+  const events    = data.events;
+  const catColors = data.cat_colors;
+
+  const priceLine = {
+    x: prices.map(p => p.datetime.substring(0,10)),
+    y: prices.map(p => p.close),
+    type: 'scatter', mode: 'lines',
+    name: 'MATD Close (p)',
+    line: { color: '#4d9fff', width: 2 },
+    hovertemplate: '%{x}<br>Close: %{y:.2f}p<extra></extra>'
+  };
+
+  const byCat = {};
+  events.forEach(e => {
+    const cat = e.category || 'OTHER';
+    if (!byCat[cat]) byCat[cat] = [];
+    byCat[cat].push(e);
+  });
+
+  const markerTraces = Object.entries(byCat).map(([cat, evs]) => ({
+    x: evs.map(e => e.datetime.substring(0,10)),
+    y: evs.map(e => e.price_on_day),
+    ids: evs.map(e => String(e.id)),
+    type: 'scatter', mode: 'markers',
+    name: cat,
+    marker: {
+      color: catColors[cat] || '#888',
+      size: 11,
+      symbol: 'circle',
+      line: { color: '#0f1117', width: 1.5 }
+    },
+    text: evs.map(e =>
+      `<b>${e.category}</b> — ${e.datetime.substring(0,10)}<br>${e.title}`),
+    hovertemplate: '%{text}<br>Price: %{y:.2f}p<br><i>Click to read</i><extra></extra>',
+    customdata: evs.map(e => e.id),
+  }));
+
+  const layout = {
+    paper_bgcolor: '#1c1f2e', plot_bgcolor: '#1c1f2e',
+    font: { color: '#ccc', size: 12 },
+    margin: { t: 30, r: 20, b: 50, l: 60 },
+    xaxis: { type: 'date', gridcolor: '#2a2d3e', linecolor: '#2a2d3e',
+             tickfont: { color: '#888' } },
+    yaxis: { title: 'Price (p)', gridcolor: '#2a2d3e', linecolor: '#2a2d3e',
+             tickfont: { color: '#888' }, titlefont: { color: '#888' } },
+    legend: { bgcolor: '#1c1f2e', bordercolor: '#2a2d3e', borderwidth: 1,
+              font: { color: '#ccc', size: 11 } },
+    hovermode: 'closest',
+  };
+
+  const config = {
+    responsive: true,
+    displayModeBar: true,
+    modeBarButtonsToRemove: ['lasso2d','select2d'],
+    displaylogo: false,
+  };
+
+  document.getElementById('chart-loading').style.display = 'none';
+  const chartDiv = document.getElementById('price-chart');
+  chartDiv.style.display = 'block';
+
+  Plotly.newPlot('price-chart', [priceLine, ...markerTraces], layout, config);
+
+  // Click handler on chart dots
+  chartDiv.on('plotly_click', function(e) {
+    const pt = e.points[0];
+    if (pt.customdata !== undefined && pt.customdata !== null) {
+      openDrawer(pt.customdata);
+    }
+  });
+
+  // Legend
+  const legend = document.getElementById('chart-legend');
+  const seen = new Set();
+  events.forEach(e => {
+    const cat = e.category || 'OTHER';
+    if (seen.has(cat)) return;
+    seen.add(cat);
+    const color = catColors[cat] || '#888';
+    legend.innerHTML += `
+      <div class="legend-item">
+        <div class="legend-dot" style="background:${color}"></div>
+        <span>${cat} — ${e.headlinename || ''}</span>
+      </div>`;
+  });
+}
+
+function renderRnsTable(data) {
+  const events    = data.prices;
+  const prices    = data.prices;
+  const catColors = data.cat_colors;
+
+  const priceMap = {};
+  prices.forEach(p => { priceMap[p.datetime.substring(0,10)] = p.close; });
+
+  function getPriceAfterDays(dateStr, days) {
+    const sorted = prices.map(p => p.datetime.substring(0,10));
+    let idx = sorted.findIndex(d => d >= dateStr);
+    if (idx === -1) return null;
+    const target = sorted[idx + days];
+    return target ? priceMap[target] : null;
+  }
+
+  function fmtRet(base, target) {
+    if (!base || !target) return '<span style="color:#555">—</span>';
+    const pct = ((target - base) / base * 100).toFixed(1);
+    const cls = pct > 0 ? 'pos' : (pct < 0 ? 'neg' : '');
+    return `<span class="${cls}">${pct > 0 ? '+' : ''}${pct}%</span>`;
+  }
+
+  const tbody = document.getElementById('rns-price-body');
+  tbody.innerHTML = '';
+
+  const sorted = [...data.events].sort(
+    (a,b) => b.datetime.localeCompare(a.datetime)
+  );
+
+  sorted.forEach(e => {
+    const dateStr = e.datetime.substring(0,10);
+    const base    = e.price_on_day;
+    const next1   = getPriceAfterDays(dateStr, 1);
+    const next5   = getPriceAfterDays(dateStr, 5);
+    const color   = catColors[e.category] || '#888';
+
+    tbody.innerHTML += `
+      <tr class="clickable" onclick="openDrawer(${e.id})">
+        <td style="color:#888;white-space:nowrap">${e.datetime.substring(0,16)}</td>
+        <td><span class="cat-tag" style="color:${color}">${e.category}</span></td>
+        <td>${e.title}</td>
+        <td style="text-align:right">${base ? base.toFixed(2)+'p' : '—'}</td>
+        <td style="text-align:right">${fmtRet(base, next1)}</td>
+        <td style="text-align:right">${fmtRet(base, next5)}</td>
+      </tr>`;
+  });
+}
+</script>
+
+</body>
+</html>
