@@ -12,8 +12,12 @@ from config.settings import TICKER
 
 if __name__ == "__main__":
     print("=" * 60)
-    print(f"  RNS TRADER — Backtest — {TICKER}")
-    print("  Requires Ollama: ollama serve && ollama pull llama3")
+    print(f"  RNS TRADER — Backtest Simulation — {TICKER}")
+    print("  Requires Ollama running:")
+    print("    ollama serve")
+    print("    ollama pull llama3")
     print("=" * 60)
+
     run_backtest(ticker=TICKER, dry_run=False)
+
     print("\nNext step: python scripts/run_analyse.py")
