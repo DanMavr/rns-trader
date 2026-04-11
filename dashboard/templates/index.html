@@ -261,4 +261,350 @@
           <span class="label">Win rate (T+15)</span>
           <span class="value">
             {% if backtest_summary.trades %}
-              {{ "%.0f"|format(backtest_summary.wins /
+              {{ "%.0f"|format(backtest_summary.wins / backtest_summary.trades * 100) }}%
+            {% else %}—{% endif %}
+          </span>
+        </div>
+        <div class="stat-row">
+          <span class="label">Avg return per trade</span>
+          <span class="value">{{ backtest_summary.avg_return }}%</span>
+        </div>
+        <div class="stat-row">
+          <span class="label">Events scored</span>
+          <span class="value">{{ backtest_summary.total }}</span>
+        </div>
+      {% endif %}
+    </div>
+
+  </div>
+
+  <div class="section-title">Announcements by Category</div>
+  <div class="card">
+    <table>
+      <thead>
+        <tr>
+          <th>Code</th><th>Category Name</th>
+          <th>Count</th><th>Distribution</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for cat in categories %}
+        <tr>
+          <td><span class="cat-tag">{{ cat.category }}</span></td>
+          <td>{{ cat.headlinename or '—' }}</td>
+          <td>{{ cat.n }}</td>
+          <td>
+            <div class="score-bar-wrap">
+              <div class="score-bar">
+                <div class="score-bar-fill"
+                     style="width:{{ (cat.n / total_rns * 100)|int }}%;
+                            background:#7eb8f7;"></div>
+              </div>
+              <span style="font-size:0.75rem;color:#888;width:32px">
+                {{ "%.0f"|format(cat.n / total_rns * 100) }}%
+              </span>
+            </div>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  {% if score_dist %}
+  <div class="section-title">LLM Score Distribution</div>
+  <div class="card">
+    <table>
+      <thead>
+        <tr><th>Score</th><th>Meaning</th><th>Count</th><th>Distribution</th></tr>
+      </thead>
+      <tbody>
+        {% set score_labels = {
+          2:'Strong positive (+2)', 1:'Mildly positive (+1)',
+          0:'Neutral (0)', -1:'Mildly negative (-1)', -2:'Strong negative (-2)'
+        } %}
+        {% set score_colors = {
+          2:'#4caf7d', 1:'#a8d8a8', 0:'#888', -1:'#f0a07a', -2:'#f07070'
+        } %}
+        {% for row in score_dist %}
+        <tr>
+          <td><strong style="color:{{ score_colors[row.llm_score] }}">
+            {{ '+' if row.llm_score > 0 else '' }}{{ row.llm_score }}
+          </strong></td>
+          <td>{{ score_labels[row.llm_score] }}</td>
+          <td>{{ row.n }}</td>
+          <td>
+            <div class="score-bar-wrap">
+              <div class="score-bar">
+                <div class="score-bar-fill"
+                     style="width:{{ (row.n / backtest_count * 100)|int }}%;
+                            background:{{ score_colors[row.llm_score] }}"></div>
+              </div>
+              <span style="font-size:0.75rem;color:#888;width:32px">
+                {{ "%.0f"|format(row.n / backtest_count * 100) }}%
+              </span>
+            </div>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+
+  <div class="section-title">Recent Announcements</div>
+  <div class="card">
+    <table>
+      <thead>
+        <tr>
+          <th>Date</th><th>Cat</th><th>Title</th>
+          <th>Text size</th><th>Status</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in recent %}
+        <tr>
+          <td style="white-space:nowrap;color:#888">{{ row.datetime[:16] }}</td>
+          <td><span class="cat-tag">{{ row.category }}</span></td>
+          <td>{{ row.title }}</td>
+          <td style="color:#888">
+            {% if row.body_len %}{{ "{:,}".format(row.body_len) }} chars
+            {% else %}—{% endif %}
+          </td>
+          <td>
+            <span class="badge {{ 'ok' if row.fetch_status == 'ok' else 'warn' }}">
+              {{ row.fetch_status }}
+            </span>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+</div><!-- end panel-summary -->
+
+
+<!-- ═══════════════════════════════════════════════════ -->
+<!--  TAB 2: PRICE CHART                                -->
+<!-- ═══════════════════════════════════════════════════ -->
+<div id="panel-chart" class="panel">
+
+  <div id="chart-container">
+    <div id="chart-loading">Loading chart data...</div>
+    <div id="price-chart" style="display:none"></div>
+    <div class="legend-row" id="chart-legend"></div>
+  </div>
+
+  <div class="section-title">All Announcements with Price Context</div>
+  <div class="card rns-price-table">
+    <table id="rns-price-tbl">
+      <thead>
+        <tr>
+          <th>Date &amp; Time</th>
+          <th>Cat</th>
+          <th>Title</th>
+          <th>Price on day</th>
+          <th>Next day</th>
+          <th>+5 days</th>
+        </tr>
+      </thead>
+      <tbody id="rns-price-body">
+        <tr><td colspan="6" style="color:#555;text-align:center;padding:20px">
+          Loading...
+        </td></tr>
+      </tbody>
+    </table>
+  </div>
+
+</div><!-- end panel-chart -->
+
+
+<script>
+// ── Tab switching ──────────────────────────────────────
+function switchTab(name, el) {
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+  el.classList.add('active');
+  document.getElementById('panel-' + name).classList.add('active');
+  if (name === 'chart' && !window._chartLoaded) loadChart();
+}
+
+// ── Load chart data from API ───────────────────────────
+function loadChart() {
+  window._chartLoaded = true;
+  fetch('/chart-data')
+    .then(r => r.json())
+    .then(data => {
+      renderChart(data);
+      renderRnsTable(data);
+    })
+    .catch(e => {
+      document.getElementById('chart-loading').textContent =
+        'Error loading chart: ' + e;
+    });
+}
+
+// ── Render Plotly chart ────────────────────────────────
+function renderChart(data) {
+  const prices   = data.prices;
+  const events   = data.events;
+  const catColors = data.cat_colors;
+
+  // Price line trace
+  const priceLine = {
+    x: prices.map(p => p.datetime.substring(0,10)),
+    y: prices.map(p => p.close),
+    type: 'scatter',
+    mode: 'lines',
+    name: 'MATD Close (p)',
+    line: { color: '#4d9fff', width: 2 },
+    hovertemplate: '%{x}<br>Close: %{y:.2f}p<extra></extra>'
+  };
+
+  // Group events by category for separate marker traces
+  const byCat = {};
+  events.forEach(e => {
+    const cat = e.category || 'OTHER';
+    if (!byCat[cat]) byCat[cat] = [];
+    byCat[cat].push(e);
+  });
+
+  const markerTraces = Object.entries(byCat).map(([cat, evs]) => ({
+    x: evs.map(e => e.datetime.substring(0,10)),
+    y: evs.map(e => e.price_on_day),
+    type: 'scatter',
+    mode: 'markers',
+    name: cat,
+    marker: {
+      color: catColors[cat] || '#888888',
+      size: 10,
+      symbol: 'circle',
+      line: { color: '#0f1117', width: 1.5 }
+    },
+    text: evs.map(e =>
+      `<b>${e.category}</b> — ${e.datetime.substring(0,10)}<br>${e.title}`
+    ),
+    hovertemplate: '%{text}<br>Price: %{y:.2f}p<extra></extra>',
+    customdata: evs.map(e => e.title),
+  }));
+
+  const layout = {
+    paper_bgcolor: '#1c1f2e',
+    plot_bgcolor:  '#1c1f2e',
+    font: { color: '#ccc', size: 12 },
+    margin: { t: 30, r: 20, b: 50, l: 60 },
+    xaxis: {
+      type: 'date',
+      gridcolor: '#2a2d3e',
+      linecolor: '#2a2d3e',
+      tickfont: { color: '#888' },
+    },
+    yaxis: {
+      title: 'Price (p)',
+      gridcolor: '#2a2d3e',
+      linecolor: '#2a2d3e',
+      tickfont: { color: '#888' },
+      titlefont: { color: '#888' },
+    },
+    legend: {
+      bgcolor: '#1c1f2e',
+      bordercolor: '#2a2d3e',
+      borderwidth: 1,
+      font: { color: '#ccc', size: 11 },
+    },
+    hovermode: 'closest',
+  };
+
+  const config = {
+    responsive: true,
+    displayModeBar: true,
+    modeBarButtonsToRemove: ['lasso2d','select2d'],
+    displaylogo: false,
+  };
+
+  document.getElementById('chart-loading').style.display = 'none';
+  const chartDiv = document.getElementById('price-chart');
+  chartDiv.style.display = 'block';
+
+  Plotly.newPlot('price-chart', [priceLine, ...markerTraces], layout, config);
+
+  // Build legend
+  const legend = document.getElementById('chart-legend');
+  const seen = new Set();
+  events.forEach(e => {
+    const cat = e.category || 'OTHER';
+    if (seen.has(cat)) return;
+    seen.add(cat);
+    const color = catColors[cat] || '#888';
+    legend.innerHTML += `
+      <div class="legend-item">
+        <div class="legend-dot" style="background:${color}"></div>
+        <span>${cat} — ${e.headlinename || ''}</span>
+      </div>`;
+  });
+}
+
+// ── Render RNS + price table ───────────────────────────
+function renderRnsTable(data) {
+  const events = data.events;
+  const prices = data.prices;
+
+  // Build date→close lookup
+  const priceMap = {};
+  prices.forEach(p => { priceMap[p.datetime.substring(0,10)] = p.close; });
+
+  // Get price N trading days after a date
+  function getPriceAfterDays(dateStr, days) {
+    const sortedDates = prices.map(p => p.datetime.substring(0,10));
+    const idx = sortedDates.indexOf(dateStr);
+    if (idx === -1) {
+      // find nearest
+      const nearest = sortedDates.find(d => d >= dateStr);
+      if (!nearest) return null;
+      const ni = sortedDates.indexOf(nearest);
+      const target = sortedDates[ni + days];
+      return target ? priceMap[target] : null;
+    }
+    const target = sortedDates[idx + days];
+    return target ? priceMap[target] : null;
+  }
+
+  function fmtReturn(base, target) {
+    if (!base || !target) return '<span style="color:#555">—</span>';
+    const pct = ((target - base) / base * 100).toFixed(1);
+    const cls = pct > 0 ? 'pos' : (pct < 0 ? 'neg' : '');
+    const sign = pct > 0 ? '+' : '';
+    return `<span class="${cls}">${sign}${pct}%</span>`;
+  }
+
+  const tbody = document.getElementById('rns-price-body');
+  tbody.innerHTML = '';
+
+  // Sort events newest first for display
+  const sorted = [...events].sort((a,b) => b.datetime.localeCompare(a.datetime));
+
+  sorted.forEach(e => {
+    const dateStr = e.datetime.substring(0,10);
+    const base    = e.price_on_day;
+    const next1   = getPriceAfterDays(dateStr, 1);
+    const next5   = getPriceAfterDays(dateStr, 5);
+
+    const catColors = data.cat_colors;
+    const color = catColors[e.category] || '#888';
+
+    tbody.innerHTML += `
+      <tr>
+        <td style="color:#888;white-space:nowrap">${e.datetime.substring(0,16)}</td>
+        <td><span class="cat-tag" style="color:${color}">${e.category}</span></td>
+        <td>${e.title}</td>
+        <td style="text-align:right">${base ? base.toFixed(2) + 'p' : '—'}</td>
+        <td style="text-align:right">${fmtReturn(base, next1)}</td>
+        <td style="text-align:right">${fmtReturn(base, next5)}</td>
+      </tr>`;
+  });
+}
+</script>
+
+</body>
+</html>
