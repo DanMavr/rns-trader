@@ -1,6 +1,6 @@
 import sqlite3
 from pathlib import Path
-from flask import Flask, render_template
+from flask import Flask, render_template, jsonify
 from config.settings import DB_PATH
 
 app = Flask(__name__)
@@ -15,7 +15,6 @@ def get_connection():
 def get_summary():
     conn = get_connection()
 
-    # RNS counts
     total_rns = conn.execute(
         "SELECT COUNT(*) FROM rns_events WHERE ticker='MATD'"
     ).fetchone()[0]
@@ -24,14 +23,12 @@ def get_summary():
         "SELECT COUNT(*) FROM rns_events WHERE ticker='MATD' AND fetch_status='ok'"
     ).fetchone()[0]
 
-    # Date range of RNS
     dates = conn.execute(
         "SELECT MIN(datetime), MAX(datetime) FROM rns_events WHERE ticker='MATD'"
     ).fetchone()
     rns_from = dates[0][:10] if dates[0] else "—"
     rns_to   = dates[1][:10] if dates[1] else "—"
 
-    # Price bar counts
     daily_bars = conn.execute(
         "SELECT COUNT(*) FROM price_bars WHERE ticker='MATD' AND interval='1d'"
     ).fetchone()[0]
@@ -40,7 +37,6 @@ def get_summary():
         "SELECT COUNT(*) FROM price_bars WHERE ticker='MATD' AND interval='5m'"
     ).fetchone()[0]
 
-    # Price date range
     price_dates = conn.execute(
         "SELECT MIN(datetime), MAX(datetime) FROM price_bars WHERE ticker='MATD' AND interval='1d'"
     ).fetchone()
@@ -53,7 +49,6 @@ def get_summary():
     intra_from = intra_dates[0][:16] if intra_dates[0] else "—"
     intra_to   = intra_dates[1][:16] if intra_dates[1] else "—"
 
-    # Category breakdown
     categories = conn.execute("""
         SELECT category, headlinename, COUNT(*) as n
         FROM rns_events
@@ -62,7 +57,6 @@ def get_summary():
         ORDER BY n DESC
     """).fetchall()
 
-    # Recent announcements
     recent = conn.execute("""
         SELECT id, datetime, category, headlinename, title,
                fetch_status, LENGTH(body_text) as body_len
@@ -72,7 +66,6 @@ def get_summary():
         LIMIT 15
     """).fetchall()
 
-    # Backtest results summary
     backtest_count = conn.execute(
         "SELECT COUNT(*) FROM backtest_results"
     ).fetchone()[0]
@@ -91,7 +84,6 @@ def get_summary():
             FROM backtest_results
         """).fetchone()
 
-    # Score distribution (if backtest run)
     score_dist = []
     if backtest_count > 0:
         score_dist = conn.execute("""
@@ -104,21 +96,21 @@ def get_summary():
     conn.close()
 
     return dict(
-        total_rns      = total_rns,
-        fetched_ok     = fetched_ok,
-        rns_from       = rns_from,
-        rns_to         = rns_to,
-        daily_bars     = daily_bars,
-        intraday_bars  = intraday_bars,
-        price_from     = price_from,
-        price_to       = price_to,
-        intra_from     = intra_from,
-        intra_to       = intra_to,
-        categories     = [dict(r) for r in categories],
-        recent         = [dict(r) for r in recent],
-        backtest_count = backtest_count,
+        total_rns        = total_rns,
+        fetched_ok       = fetched_ok,
+        rns_from         = rns_from,
+        rns_to           = rns_to,
+        daily_bars       = daily_bars,
+        intraday_bars    = intraday_bars,
+        price_from       = price_from,
+        price_to         = price_to,
+        intra_from       = intra_from,
+        intra_to         = intra_to,
+        categories       = [dict(r) for r in categories],
+        recent           = [dict(r) for r in recent],
+        backtest_count   = backtest_count,
         backtest_summary = dict(backtest_summary) if backtest_summary else None,
-        score_dist     = [dict(r) for r in score_dist],
+        score_dist       = [dict(r) for r in score_dist],
     )
 
 
@@ -126,6 +118,93 @@ def get_summary():
 def index():
     data = get_summary()
     return render_template("index.html", **data)
+
+
+@app.route("/chart-data")
+def chart_data():
+    """API endpoint — returns price series + RNS events as JSON for Plotly."""
+    conn = get_connection()
+
+    # Daily price series
+    prices = conn.execute("""
+        SELECT datetime, open, high, low, close, volume
+        FROM price_bars
+        WHERE ticker='MATD' AND interval='1d'
+        ORDER BY datetime ASC
+    """).fetchall()
+
+    # All RNS events with nearest daily close price
+    events = conn.execute("""
+        SELECT
+            e.id,
+            e.datetime,
+            e.category,
+            e.headlinename,
+            e.title,
+            e.fetch_status,
+            p.close as price_on_day,
+            p.datetime as price_date
+        FROM rns_events e
+        LEFT JOIN price_bars p
+            ON p.ticker = 'MATD'
+            AND p.interval = '1d'
+            AND p.datetime >= SUBSTR(e.datetime, 1, 10)
+        WHERE e.ticker = 'MATD'
+          AND (p.datetime = (
+              SELECT MIN(p2.datetime)
+              FROM price_bars p2
+              WHERE p2.ticker='MATD'
+                AND p2.interval='1d'
+                AND p2.datetime >= SUBSTR(e.datetime, 1, 10)
+          ) OR p.datetime IS NULL)
+        ORDER BY e.datetime ASC
+    """).fetchall()
+
+    # Backtest results if available
+    backtest = conn.execute("""
+        SELECT
+            r.rns_id,
+            r.llm_score,
+            r.llm_confidence,
+            r.llm_reason,
+            r.entry_price,
+            r.return_t15,
+            r.return_eod,
+            r.would_trade,
+            r.outcome_t15,
+            e.datetime,
+            e.title,
+            e.category
+        FROM backtest_results r
+        JOIN rns_events e ON r.rns_id = e.id
+        WHERE e.ticker = 'MATD'
+        ORDER BY e.datetime ASC
+    """).fetchall()
+
+    conn.close()
+
+    # Category colour map
+    cat_colors = {
+        "DRL": "#ff4d4d",   # red     — drilling
+        "UPD": "#4d9fff",   # blue    — operational update
+        "FR":  "#4dff91",   # green   — final results
+        "IR":  "#a8ff4d",   # lime    — interim results
+        "IOE": "#ff9f4d",   # orange  — issue of equity
+        "ROI": "#ff9f4d",   # orange  — result of issue
+        "MSC": "#c84dff",   # purple  — miscellaneous
+        "NRA": "#888888",   # grey    — non-regulatory
+        "NOA": "#555555",   # dark    — notice of AGM
+        "RAG": "#555555",   # dark    — result of AGM
+        "BOA": "#ffdd4d",   # yellow  — board change
+        "AGR": "#4dffee",   # cyan    — agreement
+    }
+
+    return jsonify({
+        "prices": [dict(r) for r in prices],
+        "events": [dict(r) for r in events],
+        "backtest": [dict(r) for r in backtest],
+        "cat_colors": cat_colors,
+    })
 
 
 @app.route("/health")
