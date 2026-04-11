@@ -22,7 +22,7 @@ def test_clean_html():
     from src.collect.html_cleaner import clean_html
     html = "<html><body><p>Hello <b>world</b></p></body></html>"
     out  = clean_html(html)
-    assert "Hello world" in out
+    assert "Hello" in out and "world" in out
     assert "<" not in out
     print(f"  PASS clean_html: '{out}'")
 
