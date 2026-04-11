@@ -38,32 +38,30 @@ def get_summary():
     ).fetchone()[0]
 
     price_dates = conn.execute(
-        "SELECT MIN(datetime), MAX(datetime) FROM price_bars WHERE ticker='MATD' AND interval='1d'"
+        "SELECT MIN(datetime), MAX(datetime) FROM price_bars "
+        "WHERE ticker='MATD' AND interval='1d'"
     ).fetchone()
     price_from = price_dates[0][:10] if price_dates[0] else "—"
     price_to   = price_dates[1][:10] if price_dates[1] else "—"
 
     intra_dates = conn.execute(
-        "SELECT MIN(datetime), MAX(datetime) FROM price_bars WHERE ticker='MATD' AND interval='5m'"
+        "SELECT MIN(datetime), MAX(datetime) FROM price_bars "
+        "WHERE ticker='MATD' AND interval='5m'"
     ).fetchone()
     intra_from = intra_dates[0][:16] if intra_dates[0] else "—"
     intra_to   = intra_dates[1][:16] if intra_dates[1] else "—"
 
     categories = conn.execute("""
         SELECT category, headlinename, COUNT(*) as n
-        FROM rns_events
-        WHERE ticker='MATD'
-        GROUP BY category
-        ORDER BY n DESC
+        FROM rns_events WHERE ticker='MATD'
+        GROUP BY category ORDER BY n DESC
     """).fetchall()
 
     recent = conn.execute("""
         SELECT id, datetime, category, headlinename, title,
                fetch_status, LENGTH(body_text) as body_len
-        FROM rns_events
-        WHERE ticker='MATD'
-        ORDER BY datetime DESC
-        LIMIT 15
+        FROM rns_events WHERE ticker='MATD'
+        ORDER BY datetime DESC LIMIT 15
     """).fetchall()
 
     backtest_count = conn.execute(
@@ -89,8 +87,7 @@ def get_summary():
         score_dist = conn.execute("""
             SELECT llm_score, COUNT(*) as n
             FROM backtest_results
-            GROUP BY llm_score
-            ORDER BY llm_score DESC
+            GROUP BY llm_score ORDER BY llm_score DESC
         """).fetchall()
 
     conn.close()
@@ -120,12 +117,89 @@ def index():
     return render_template("index.html", **data)
 
 
-@app.route("/chart-data")
-def chart_data():
-    """API endpoint — returns price series + RNS events as JSON for Plotly."""
+@app.route("/rns/<int:news_id>")
+def rns_detail(news_id):
+    """Return full detail for a single RNS announcement."""
     conn = get_connection()
 
-    # Daily price series
+    event = conn.execute("""
+        SELECT * FROM rns_events WHERE id = ?
+    """, (news_id,)).fetchone()
+
+    if not event:
+        conn.close()
+        return jsonify({"error": "not found"}), 404
+
+    # Get price context
+    prices = conn.execute("""
+        SELECT datetime, close FROM price_bars
+        WHERE ticker='MATD' AND interval='1d'
+        ORDER BY datetime ASC
+    """).fetchall()
+
+    price_list = [(r["datetime"][:10], r["close"]) for r in prices]
+    date_str   = event["datetime"][:10]
+
+    def get_price_on_day(d):
+        for dt, c in price_list:
+            if dt >= d:
+                return c
+        return None
+
+    def get_price_n_days(d, n):
+        dates = [p[0] for p in price_list]
+        closes = [p[1] for p in price_list]
+        for i, dt in enumerate(dates):
+            if dt >= d:
+                idx = i + n
+                return closes[idx] if idx < len(closes) else None
+        return None
+
+    base    = get_price_on_day(date_str)
+    next1   = get_price_n_days(date_str, 1)
+    next5   = get_price_n_days(date_str, 5)
+    next10  = get_price_n_days(date_str, 10)
+
+    def pct(b, t):
+        if b and t:
+            return round((t - b) / b * 100, 2)
+        return None
+
+    # Backtest result if available
+    bt = conn.execute("""
+        SELECT * FROM backtest_results WHERE rns_id = ?
+    """, (news_id,)).fetchone()
+
+    conn.close()
+
+    return jsonify({
+        "id":          event["id"],
+        "ticker":      event["ticker"],
+        "rnsnumber":   event["rnsnumber"],
+        "category":    event["category"],
+        "headlinename":event["headlinename"],
+        "title":       event["title"],
+        "datetime":    event["datetime"],
+        "body_text":   event["body_text"],
+        "fetch_status":event["fetch_status"],
+        "price": {
+            "on_day":  base,
+            "next1":   next1,
+            "next5":   next5,
+            "next10":  next10,
+            "ret1":    pct(base, next1),
+            "ret5":    pct(base, next5),
+            "ret10":   pct(base, next10),
+        },
+        "backtest": dict(bt) if bt else None,
+    })
+
+
+@app.route("/chart-data")
+def chart_data():
+    """Price series + RNS events for Plotly chart."""
+    conn = get_connection()
+
     prices = conn.execute("""
         SELECT datetime, open, high, low, close, volume
         FROM price_bars
@@ -133,76 +207,56 @@ def chart_data():
         ORDER BY datetime ASC
     """).fetchall()
 
-    # All RNS events with nearest daily close price
     events = conn.execute("""
         SELECT
-            e.id,
-            e.datetime,
-            e.category,
-            e.headlinename,
-            e.title,
+            e.id, e.datetime, e.category, e.headlinename, e.title,
             e.fetch_status,
             p.close as price_on_day,
             p.datetime as price_date
         FROM rns_events e
         LEFT JOIN price_bars p
-            ON p.ticker = 'MATD'
-            AND p.interval = '1d'
-            AND p.datetime >= SUBSTR(e.datetime, 1, 10)
-        WHERE e.ticker = 'MATD'
-          AND (p.datetime = (
-              SELECT MIN(p2.datetime)
-              FROM price_bars p2
-              WHERE p2.ticker='MATD'
-                AND p2.interval='1d'
-                AND p2.datetime >= SUBSTR(e.datetime, 1, 10)
-          ) OR p.datetime IS NULL)
+            ON p.ticker='MATD' AND p.interval='1d'
+            AND p.datetime=(
+                SELECT MIN(p2.datetime) FROM price_bars p2
+                WHERE p2.ticker='MATD' AND p2.interval='1d'
+                AND p2.datetime >= SUBSTR(e.datetime,1,10)
+            )
+        WHERE e.ticker='MATD'
         ORDER BY e.datetime ASC
     """).fetchall()
 
-    # Backtest results if available
     backtest = conn.execute("""
-        SELECT
-            r.rns_id,
-            r.llm_score,
-            r.llm_confidence,
-            r.llm_reason,
-            r.entry_price,
-            r.return_t15,
-            r.return_eod,
-            r.would_trade,
-            r.outcome_t15,
-            e.datetime,
-            e.title,
-            e.category
+        SELECT r.rns_id, r.llm_score, r.llm_confidence, r.llm_reason,
+               r.entry_price, r.return_t15, r.return_eod,
+               r.would_trade, r.outcome_t15,
+               e.datetime, e.title, e.category
         FROM backtest_results r
         JOIN rns_events e ON r.rns_id = e.id
-        WHERE e.ticker = 'MATD'
+        WHERE e.ticker='MATD'
         ORDER BY e.datetime ASC
     """).fetchall()
 
     conn.close()
 
-    # Category colour map
     cat_colors = {
-        "DRL": "#ff4d4d",   # red     — drilling
-        "UPD": "#4d9fff",   # blue    — operational update
-        "FR":  "#4dff91",   # green   — final results
-        "IR":  "#a8ff4d",   # lime    — interim results
-        "IOE": "#ff9f4d",   # orange  — issue of equity
-        "ROI": "#ff9f4d",   # orange  — result of issue
-        "MSC": "#c84dff",   # purple  — miscellaneous
-        "NRA": "#888888",   # grey    — non-regulatory
-        "NOA": "#555555",   # dark    — notice of AGM
-        "RAG": "#555555",   # dark    — result of AGM
-        "BOA": "#ffdd4d",   # yellow  — board change
-        "AGR": "#4dffee",   # cyan    — agreement
+        "DRL": "#ff4d4d",
+        "UPD": "#4d9fff",
+        "FR":  "#4dff91",
+        "IR":  "#a8ff4d",
+        "IOE": "#ff9f4d",
+        "ROI": "#ff9f4d",
+        "MSC": "#c84dff",
+        "NRA": "#888888",
+        "NOA": "#555555",
+        "RAG": "#555555",
+        "BOA": "#ffdd4d",
+        "AGR": "#4dffee",
     }
 
     return jsonify({
-        "prices": [dict(r) for r in prices],
-        "events": [dict(r) for r in events],
-        "backtest": [dict(r) for r in backtest],
+        "prices":     [dict(r) for r in prices],
+        "events":     [dict(r) for r in events],
+        "backtest":   [dict(r) for r in backtest],
         "cat_colors": cat_colors,
     })
 
