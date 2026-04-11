@@ -1,178 +1,140 @@
-import time
-import requests
-from config.settings import (
-    LSE_REFRESH_URL, LSE_HEADERS,
-    NEWS_COMPONENT_ID, NEWS_LIST_COMPONENT_ID,
-    NEWS_LIST_TAB_ID, TICKER, ISSUER_NAME
-)
+import yfinance as yf
+from config.settings import TICKER_YF, TICKER
 from src.collect.database import get_connection
-from src.collect.html_cleaner import clean_html
 
 
-def fetch_rns_list(ticker=TICKER, issuer_name=ISSUER_NAME, max_pages=5):
+def fetch_and_save_prices(ticker_yf=TICKER_YF, ticker=TICKER):
+    """Fetch OHLCV price history from Yahoo Finance and store in DB."""
+    conn = get_connection()
+
+    # --- Daily bars: 2 years ---
+    print(f"  Fetching daily bars for {ticker_yf} (2 years)...")
+    try:
+        daily = yf.Ticker(ticker_yf).history(period="2y", interval="1d")
+        daily = daily.reset_index()
+        count = 0
+        for _, row in daily.iterrows():
+            try:
+                conn.execute("""
+                    INSERT OR IGNORE INTO price_bars
+                        (ticker, datetime, interval, open, high, low, close, volume)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    ticker,
+                    str(row["Date"])[:10] + "T08:00:00",
+                    "1d",
+                    round(float(row["Open"]),  4),
+                    round(float(row["High"]),  4),
+                    round(float(row["Low"]),   4),
+                    round(float(row["Close"]), 4),
+                    int(row["Volume"]),
+                ))
+                count += 1
+            except Exception:
+                pass
+        conn.commit()
+        print(f"    Saved {count} daily bars")
+    except Exception as e:
+        print(f"    Daily fetch failed: {e}")
+
+    # --- 5-minute intraday bars: last 60 days ---
+    print(f"  Fetching 5-min intraday bars for {ticker_yf} (60 days)...")
+    try:
+        intra = yf.Ticker(ticker_yf).history(period="60d", interval="5m")
+        intra = intra.reset_index()
+        count = 0
+        for _, row in intra.iterrows():
+            try:
+                conn.execute("""
+                    INSERT OR IGNORE INTO price_bars
+                        (ticker, datetime, interval, open, high, low, close, volume)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    ticker,
+                    str(row["Datetime"])[:19],
+                    "5m",
+                    round(float(row["Open"]),  4),
+                    round(float(row["High"]),  4),
+                    round(float(row["Low"]),   4),
+                    round(float(row["Close"]), 4),
+                    int(row["Volume"]),
+                ))
+                count += 1
+            except Exception:
+                pass
+        conn.commit()
+        print(f"    Saved {count} intraday 5-min bars")
+    except Exception as e:
+        print(f"    Intraday fetch failed: {e}")
+
+    conn.close()
+
+
+def get_price_at(ticker, dt_str, interval="5m"):
     """
-    Fetch paginated RNS list for a ticker from the LSE API.
-    Returns a flat list of announcement dicts.
+    Return nearest price bar at or after dt_str.
+    Falls back to daily bar if 5m unavailable.
+    Returns a dict or None.
     """
-    all_items = []
-    page = 0
+    conn = get_connection()
 
-    while page < max_pages:
-        payload = {
-            "path": "issuer-profile",
-            "parameters": (
-                f"tidm%3D{ticker}"
-                f"%26tab%3Danalysis"
-                f"%26issuername%3D{issuer_name}"
-                f"%26tabId%3D{NEWS_LIST_TAB_ID}"
-            ),
-            "components": [{
-                "componentId": NEWS_LIST_COMPONENT_ID,
-                "parameters": f"page={page}&size=20"
-            }]
-        }
-        r = requests.post(LSE_REFRESH_URL, json=payload,
-                          headers=LSE_HEADERS, timeout=15)
-        r.raise_for_status()
-        data = r.json()
+    row = conn.execute("""
+        SELECT * FROM price_bars
+        WHERE ticker = ? AND interval = ? AND datetime >= ?
+        ORDER BY datetime ASC LIMIT 1
+    """, (ticker, interval, dt_str)).fetchone()
 
-        comp = next(
-            (c for c in data if c.get("type") == "news-table-issuer-profile"),
-            None
-        )
-        if not comp:
-            print(f"  No news-table component on page {page}")
-            break
+    if not row:
+        row = conn.execute("""
+            SELECT * FROM price_bars
+            WHERE ticker = ? AND interval = '1d' AND datetime >= ?
+            ORDER BY datetime ASC LIMIT 1
+        """, (ticker, dt_str[:10])).fetchone()
 
-        val = comp["content"][0]["value"]
-        if not val:
-            break
-
-        items = val.get("content", [])
-        all_items.extend(items)
-        total_pages = val.get("totalPages", 1)
-        print(f"  Page {page + 1}/{total_pages}: {len(items)} items fetched")
-
-        if val.get("last", True):
-            break
-
-        page += 1
-        time.sleep(1)
-
-    return all_items
+    conn.close()
+    return dict(row) if row else None
 
 
-def fetch_rns_body(news_id):
+def get_price_after_minutes(ticker, entry_dt_str, minutes, interval="5m"):
     """
-    Fetch full RNS body for a single announcement by numeric newsId.
-    Returns the full value dict (with body, title, rnsnumber etc.) or None.
+    Return close price N minutes after entry_dt_str.
+    Falls back to daily if 5m unavailable.
     """
-    payload = {
-        "path": "news-article",
-        "parameters": f"newsId%3D{news_id}",
-        "components": [{
-            "componentId": NEWS_COMPONENT_ID,
-            "parameters": None
-        }]
-    }
-    r = requests.post(LSE_REFRESH_URL, json=payload,
-                      headers=LSE_HEADERS, timeout=15)
-    r.raise_for_status()
-    data = r.json()
-
-    comp = next(
-        (c for c in data if c.get("type") == "news-article-content"),
-        None
-    )
-    if not comp:
+    from datetime import datetime, timedelta
+    try:
+        entry_dt   = datetime.fromisoformat(entry_dt_str.replace("Z", ""))
+        target_dt  = entry_dt + timedelta(minutes=minutes)
+        target_str = target_dt.strftime("%Y-%m-%dT%H:%M:%S")
+    except Exception:
         return None
 
-    val = next(
-        (x["value"] for x in comp["content"] if x["name"] == "newsarticle"),
-        None
-    )
-    return val
-
-
-def save_rns_list(items, ticker=TICKER):
-    """Insert RNS list items into the database, skipping duplicates."""
     conn = get_connection()
-    inserted = 0
-    for item in items:
-        try:
-            conn.execute("""
-                INSERT OR IGNORE INTO rns_events
-                    (id, ticker, rnsnumber, category, title, datetime)
-                VALUES (?, ?, ?, ?, ?, ?)
-            """, (
-                item["id"],
-                ticker,
-                item.get("rnsnumber"),
-                item.get("category"),
-                item.get("title"),
-                item.get("datetime"),
-            ))
-            if conn.total_changes:
-                inserted += 1
-        except Exception as e:
-            print(f"  Error inserting id={item.get('id')}: {e}")
-    conn.commit()
+
+    row = conn.execute("""
+        SELECT close FROM price_bars
+        WHERE ticker = ? AND interval = ? AND datetime >= ?
+        ORDER BY datetime ASC LIMIT 1
+    """, (ticker, interval, target_str)).fetchone()
+
+    if not row:
+        row = conn.execute("""
+            SELECT close FROM price_bars
+            WHERE ticker = ? AND interval = '1d' AND datetime >= ?
+            ORDER BY datetime ASC LIMIT 1
+        """, (ticker, target_str[:10])).fetchone()
+
     conn.close()
-    print(f"  {inserted} new items saved to database")
+    return float(row["close"]) if row else None
 
 
-def enrich_rns_bodies(delay=2.0):
-    """
-    For every rns_event with fetch_status='pending',
-    fetch the full body text and update the database row.
-    """
+def get_eod_price(ticker, date_str):
+    """Return end-of-day close price for a given YYYY-MM-DD date string."""
     conn = get_connection()
-    rows = conn.execute("""
-        SELECT id, title FROM rns_events
-        WHERE fetch_status = 'pending'
-        ORDER BY datetime DESC
-    """).fetchall()
+    row = conn.execute("""
+        SELECT close FROM price_bars
+        WHERE ticker = ? AND interval = '1d'
+          AND datetime LIKE ?
+        ORDER BY datetime DESC LIMIT 1
+    """, (ticker, date_str[:10] + "%")).fetchone()
     conn.close()
-
-    total = len(rows)
-    print(f"  {total} announcements to enrich...")
-
-    for i, row in enumerate(rows):
-        news_id = row["id"]
-        title   = row["title"] or ""
-        print(f"  [{i + 1}/{total}] id={news_id}  {title[:50]}")
-
-        try:
-            result = fetch_rns_body(news_id)
-            conn = get_connection()
-
-            if result and result.get("body"):
-                body_text = clean_html(result["body"])
-                conn.execute("""
-                    UPDATE rns_events SET
-                        body_html    = ?,
-                        body_text    = ?,
-                        headlinename = ?,
-                        fetch_status = 'ok'
-                    WHERE id = ?
-                """, (
-                    result["body"],
-                    body_text,
-                    result.get("headlinename"),
-                    news_id,
-                ))
-                print(f"    OK — {len(body_text)} chars plain text")
-            else:
-                conn.execute(
-                    "UPDATE rns_events SET fetch_status = 'null' WHERE id = ?",
-                    (news_id,)
-                )
-                print(f"    NULL body — skipped")
-
-            conn.commit()
-            conn.close()
-
-        except Exception as e:
-            print(f"    ERROR: {e}")
-
-        time.sleep(delay)
+    return float(row["close"]) if row else None
