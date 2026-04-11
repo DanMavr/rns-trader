@@ -1,1 +1,14 @@
+[Unit]
+Description=RNS Trader Dashboard
+After=network.target
 
+[Service]
+Type=simple
+User=dmavr
+WorkingDirectory=/home/dmavr/rns-trader
+ExecStart=/home/dmavr/rns-trader/venv/bin/python scripts/run_dashboard.py
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
