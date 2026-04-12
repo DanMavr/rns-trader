@@ -26,7 +26,7 @@ RNS Category name: {headlinename}
 Headline: {title}
 
 Full announcement text:
-{body_text[:4000]}
+{body_text}
 
 ---
 Score the likely share price reaction in the first 15-30 minutes
