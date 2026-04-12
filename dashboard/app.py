@@ -72,11 +72,11 @@ def get_summary():
     if backtest_count > 0:
         backtest_summary = conn.execute("""
             SELECT
-                COUNT(*) as total,
-                SUM(would_trade) as trades,
-                SUM(CASE WHEN outcome_t15='WIN' THEN 1 ELSE 0 END) as wins,
+                COUNT(*)                                          as total,
+                SUM(would_trade)                                  as trades,
+                SUM(CASE WHEN outcome_t15='WIN'  THEN 1 ELSE 0 END) as wins,
                 SUM(CASE WHEN outcome_t15='LOSS' THEN 1 ELSE 0 END) as losses,
-                ROUND(AVG(CASE WHEN would_trade=1 THEN return_t15 END), 2) as avg_return,
+                ROUND(AVG(CASE WHEN would_trade=1 THEN return_eod END), 2) as avg_return,
                 MIN(llm_score) as min_score,
                 MAX(llm_score) as max_score
             FROM backtest_results
@@ -119,24 +119,21 @@ def index():
 
 @app.route("/rns/<int:news_id>")
 def rns_detail(news_id):
-    """Return full detail for a single RNS announcement."""
     conn = get_connection()
 
-    event = conn.execute("""
-        SELECT * FROM rns_events WHERE id = ?
-    """, (news_id,)).fetchone()
+    event = conn.execute(
+        "SELECT * FROM rns_events WHERE id=?", (news_id,)
+    ).fetchone()
 
     if not event:
         conn.close()
         return jsonify({"error": "not found"}), 404
 
-    # Get price context
     prices = conn.execute("""
         SELECT datetime, close FROM price_bars
         WHERE ticker='MATD' AND interval='1d'
         ORDER BY datetime ASC
     """).fetchall()
-
     price_list = [(r["datetime"][:10], r["close"]) for r in prices]
     date_str   = event["datetime"][:10]
 
@@ -147,49 +144,48 @@ def rns_detail(news_id):
         return None
 
     def get_price_n_days(d, n):
-        dates = [p[0] for p in price_list]
         closes = [p[1] for p in price_list]
+        dates  = [p[0] for p in price_list]
         for i, dt in enumerate(dates):
             if dt >= d:
                 idx = i + n
                 return closes[idx] if idx < len(closes) else None
         return None
 
-    base    = get_price_on_day(date_str)
-    next1   = get_price_n_days(date_str, 1)
-    next5   = get_price_n_days(date_str, 5)
-    next10  = get_price_n_days(date_str, 10)
-
     def pct(b, t):
         if b and t:
             return round((t - b) / b * 100, 2)
         return None
 
-    # Backtest result if available
-    bt = conn.execute("""
-        SELECT * FROM backtest_results WHERE rns_id = ?
-    """, (news_id,)).fetchone()
+    base   = get_price_on_day(date_str)
+    next1  = get_price_n_days(date_str, 1)
+    next5  = get_price_n_days(date_str, 5)
+    next10 = get_price_n_days(date_str, 10)
+
+    bt = conn.execute(
+        "SELECT * FROM backtest_results WHERE rns_id=?", (news_id,)
+    ).fetchone()
 
     conn.close()
 
     return jsonify({
-        "id":          event["id"],
-        "ticker":      event["ticker"],
-        "rnsnumber":   event["rnsnumber"],
-        "category":    event["category"],
-        "headlinename":event["headlinename"],
-        "title":       event["title"],
-        "datetime":    event["datetime"],
-        "body_text":   event["body_text"],
-        "fetch_status":event["fetch_status"],
+        "id":           event["id"],
+        "ticker":       event["ticker"],
+        "rnsnumber":    event["rnsnumber"],
+        "category":     event["category"],
+        "headlinename": event["headlinename"],
+        "title":        event["title"],
+        "datetime":     event["datetime"],
+        "body_text":    event["body_text"],
+        "fetch_status": event["fetch_status"],
         "price": {
-            "on_day":  base,
-            "next1":   next1,
-            "next5":   next5,
-            "next10":  next10,
-            "ret1":    pct(base, next1),
-            "ret5":    pct(base, next5),
-            "ret10":   pct(base, next10),
+            "on_day": base,
+            "next1":  next1,
+            "next5":  next5,
+            "next10": next10,
+            "ret1":   pct(base, next1),
+            "ret5":   pct(base, next5),
+            "ret10":  pct(base, next10),
         },
         "backtest": dict(bt) if bt else None,
     })
@@ -197,22 +193,21 @@ def rns_detail(news_id):
 
 @app.route("/chart-data")
 def chart_data():
-    """Price series + RNS events for Plotly chart."""
     conn = get_connection()
 
     prices = conn.execute("""
         SELECT datetime, open, high, low, close, volume
-        FROM price_bars
-        WHERE ticker='MATD' AND interval='1d'
+        FROM price_bars WHERE ticker='MATD' AND interval='1d'
         ORDER BY datetime ASC
     """).fetchall()
 
     events = conn.execute("""
-        SELECT
-            e.id, e.datetime, e.category, e.headlinename, e.title,
-            e.fetch_status,
-            p.close as price_on_day,
-            p.datetime as price_date
+        SELECT e.id, e.datetime, e.category, e.headlinename, e.title,
+               e.fetch_status,
+               p.close  as price_on_day,
+               p.datetime as price_date,
+               b.llm_score, b.llm_confidence, b.timing,
+               b.would_trade, b.outcome_t15, b.return_eod
         FROM rns_events e
         LEFT JOIN price_bars p
             ON p.ticker='MATD' AND p.interval='1d'
@@ -221,17 +216,7 @@ def chart_data():
                 WHERE p2.ticker='MATD' AND p2.interval='1d'
                 AND p2.datetime >= SUBSTR(e.datetime,1,10)
             )
-        WHERE e.ticker='MATD'
-        ORDER BY e.datetime ASC
-    """).fetchall()
-
-    backtest = conn.execute("""
-        SELECT r.rns_id, r.llm_score, r.llm_confidence, r.llm_reason,
-               r.entry_price, r.return_t15, r.return_eod,
-               r.would_trade, r.outcome_t15,
-               e.datetime, e.title, e.category
-        FROM backtest_results r
-        JOIN rns_events e ON r.rns_id = e.id
+        LEFT JOIN backtest_results b ON b.rns_id = e.id
         WHERE e.ticker='MATD'
         ORDER BY e.datetime ASC
     """).fetchall()
@@ -253,11 +238,142 @@ def chart_data():
         "AGR": "#4dffee",
     }
 
+    score_colors = {
+        2: "#4caf7d", 1: "#a8d8a8", 0: "#888888",
+        -1: "#f0a07a", -2: "#f07070",
+    }
+
     return jsonify({
-        "prices":     [dict(r) for r in prices],
-        "events":     [dict(r) for r in events],
-        "backtest":   [dict(r) for r in backtest],
-        "cat_colors": cat_colors,
+        "prices":       [dict(r) for r in prices],
+        "events":       [dict(r) for r in events],
+        "cat_colors":   cat_colors,
+        "score_colors": score_colors,
+    })
+
+
+@app.route("/backtest-data")
+def backtest_data():
+    """All backtest results for the analysis tab."""
+    conn = get_connection()
+
+    results = conn.execute("""
+        SELECT
+            b.*,
+            e.datetime, e.category, e.headlinename,
+            e.title, e.id as event_id
+        FROM backtest_results b
+        JOIN rns_events e ON b.rns_id = e.id
+        WHERE e.ticker = 'MATD'
+        ORDER BY e.datetime ASC
+    """).fetchall()
+
+    # Score accuracy — for each score, what % went the right way
+    score_accuracy = conn.execute("""
+        SELECT
+            llm_score,
+            COUNT(*) as total,
+            SUM(CASE WHEN return_eod > 0 AND llm_score > 0 THEN 1
+                     WHEN return_eod < 0 AND llm_score < 0 THEN 1
+                     ELSE 0 END) as correct,
+            ROUND(AVG(return_eod), 2) as avg_eod,
+            ROUND(AVG(return_t15), 2) as avg_t15,
+            MIN(return_eod) as min_eod,
+            MAX(return_eod) as max_eod
+        FROM backtest_results
+        WHERE return_eod IS NOT NULL AND llm_score != 0
+        GROUP BY llm_score
+        ORDER BY llm_score DESC
+    """).fetchall()
+
+    # Category accuracy
+    cat_accuracy = conn.execute("""
+        SELECT
+            e.category,
+            e.headlinename,
+            COUNT(*) as total,
+            ROUND(AVG(b.llm_score), 2) as avg_score,
+            ROUND(AVG(b.return_eod), 2) as avg_eod,
+            SUM(CASE WHEN b.return_eod > 0 AND b.llm_score > 0 THEN 1
+                     WHEN b.return_eod < 0 AND b.llm_score < 0 THEN 1
+                     ELSE 0 END) as correct
+        FROM backtest_results b
+        JOIN rns_events e ON b.rns_id = e.id
+        WHERE e.ticker='MATD' AND b.return_eod IS NOT NULL
+        GROUP BY e.category
+        ORDER BY total DESC
+    """).fetchall()
+
+    # Timing accuracy
+    timing_accuracy = conn.execute("""
+        SELECT
+            timing,
+            COUNT(*) as total,
+            ROUND(AVG(return_eod), 2) as avg_eod,
+            SUM(CASE WHEN return_eod > 0 AND llm_score > 0 THEN 1
+                     WHEN return_eod < 0 AND llm_score < 0 THEN 1
+                     ELSE 0 END) as correct
+        FROM backtest_results
+        WHERE return_eod IS NOT NULL AND llm_score != 0
+        GROUP BY timing
+    """).fetchall()
+
+    # Confidence accuracy
+    conf_accuracy = conn.execute("""
+        SELECT
+            llm_confidence,
+            COUNT(*) as total,
+            ROUND(AVG(return_eod), 2) as avg_eod,
+            SUM(CASE WHEN return_eod > 0 AND llm_score > 0 THEN 1
+                     WHEN return_eod < 0 AND llm_score < 0 THEN 1
+                     ELSE 0 END) as correct
+        FROM backtest_results
+        WHERE return_eod IS NOT NULL AND llm_score != 0
+        GROUP BY llm_confidence
+        ORDER BY
+            CASE llm_confidence
+                WHEN 'high' THEN 1
+                WHEN 'medium' THEN 2
+                WHEN 'low' THEN 3
+            END
+    """).fetchall()
+
+    # Cumulative P&L for would-trade signals
+    trades = conn.execute("""
+        SELECT e.datetime, b.direction,
+               b.return_eod, b.outcome_eod,
+               b.return_t15, b.outcome_t15,
+               b.llm_score, b.llm_confidence,
+               e.title, e.category
+        FROM backtest_results b
+        JOIN rns_events e ON b.rns_id = e.id
+        WHERE e.ticker='MATD' AND b.would_trade=1
+        ORDER BY e.datetime ASC
+    """).fetchall()
+
+    # Build cumulative P&L series
+    cum_pnl = []
+    running = 0.0
+    for t in trades:
+        ret = t["return_eod"] or 0
+        running += ret
+        cum_pnl.append({
+            "date":      t["datetime"][:10],
+            "title":     t["title"],
+            "direction": t["direction"],
+            "return":    round(ret, 2),
+            "cumulative": round(running, 2),
+            "outcome":   t["outcome_eod"],
+        })
+
+    conn.close()
+
+    return jsonify({
+        "results":         [dict(r) for r in results],
+        "score_accuracy":  [dict(r) for r in score_accuracy],
+        "cat_accuracy":    [dict(r) for r in cat_accuracy],
+        "timing_accuracy": [dict(r) for r in timing_accuracy],
+        "conf_accuracy":   [dict(r) for r in conf_accuracy],
+        "cum_pnl":         cum_pnl,
     })
 
 
