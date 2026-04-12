@@ -143,10 +143,9 @@ def run_backtest(ticker=TICKER, use_llm=False):
         outcome_eod = ("WIN" if (return_eod or 0) > 0 else "LOSS") \
                       if return_eod is not None else None
 
-        print(f"  Entry={entry_price:.2f}p  "
-              f"T+15={returns['t15']:+.2f}% " if returns['t15'] else
-              f"  Entry={entry_price:.2f}p  T+15=—  ", end="")
-        print(f"EOD={return_eod:+.2f}%" if return_eod else "EOD=—")
+        t15_str = f"{returns['t15']:+.2f}%" if returns['t15'] is not None else "—"
+        eod_str = f"{return_eod:+.2f}%" if return_eod is not None else "—"
+        print(f"  Entry={entry_price:.2f}p  T+15={t15_str}  EOD={eod_str}")
         print(f"  {outcome_t15 or '?'} (T15)  {outcome_eod or '?'} (EOD)\n")
 
         # Optional LLM
