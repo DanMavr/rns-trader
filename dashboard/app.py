@@ -5,6 +5,21 @@ from config.settings import DB_PATH, TICKERS, DEFAULT_TICKER
 app = Flask(__name__)
 
 
+@app.errorhandler(Exception)
+def handle_exception(e):
+    import traceback
+    return jsonify({
+        "error": str(e),
+        "traceback": traceback.format_exc()
+    }), 500
+
+
+@app.errorhandler(500)
+def handle_500(e):
+    return jsonify({"error": "Internal server error", "detail": str(e)}), 500
+
+
+
 def get_connection():
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
@@ -210,54 +225,59 @@ def rns_detail(news_id):
 @app.route("/chart-data")
 def chart_data():
     ticker = request.args.get("ticker", DEFAULT_TICKER).upper()
-    conn = get_connection()
+    try:
+        conn = get_connection()
 
-    prices = conn.execute("""
-        SELECT datetime, open, high, low, close, volume
-        FROM price_bars WHERE ticker=? AND interval='1d'
-        ORDER BY datetime ASC
-    """, (ticker,)).fetchall()
+        prices = conn.execute("""
+            SELECT datetime, open, high, low, close, volume
+            FROM price_bars WHERE ticker=? AND interval='1d'
+            ORDER BY datetime ASC
+        """, (ticker,)).fetchall()
 
-    events = conn.execute("""
-        SELECT e.id, e.datetime, e.category, e.headlinename, e.title,
-               p.close  as price_on_day,
-               b.reaction_triggered, b.reaction_strength,
-               b.reaction_direction, b.reaction_confidence,
-               b.reaction_price_chg, b.timing,
-               b.setup_quality, b.would_trade,
-               b.outcome_eod, b.return_eod
-        FROM rns_events e
-        LEFT JOIN price_bars p
-            ON p.ticker=? AND p.interval='1d'
-            AND p.datetime=(
-                SELECT MIN(p2.datetime) FROM price_bars p2
-                WHERE p2.ticker=? AND p2.interval='1d'
-                AND p2.datetime >= SUBSTR(e.datetime,1,10)
-            )
-        LEFT JOIN backtest_results b ON b.rns_id = e.id
-        WHERE e.ticker=?
-        ORDER BY e.datetime ASC
-    """, (ticker, ticker, ticker, ticker)).fetchall()
-    conn.close()
+        events = conn.execute("""
+            SELECT e.id, e.datetime, e.category, e.headlinename, e.title,
+                   p.close  as price_on_day,
+                   b.reaction_triggered, b.reaction_strength,
+                   b.reaction_direction, b.reaction_confidence,
+                   b.reaction_price_chg, b.timing,
+                   b.setup_quality, b.would_trade,
+                   b.outcome_eod, b.return_eod
+            FROM rns_events e
+            LEFT JOIN price_bars p
+                ON p.ticker=? AND p.interval='1d'
+                AND p.datetime=(
+                    SELECT MIN(p2.datetime) FROM price_bars p2
+                    WHERE p2.ticker=? AND p2.interval='1d'
+                    AND p2.datetime >= SUBSTR(e.datetime,1,10)
+                )
+            LEFT JOIN backtest_results b ON b.rns_id = e.id
+            WHERE e.ticker=?
+            ORDER BY e.datetime ASC
+        """, (ticker, ticker, ticker, ticker)).fetchall()
+        conn.close()
 
-    cat_colors = {
-        "DRL":"#ff4d4d","UPD":"#4d9fff","FR":"#4dff91",
-        "IR":"#a8ff4d","IOE":"#ff9f4d","ROI":"#ff9f4d",
-        "MSC":"#c84dff","NRA":"#666666","NOA":"#444444",
-        "RAG":"#444444","BOA":"#ffdd4d","AGR":"#4dffee",
-    }
-    return jsonify({
-        "prices":     [dict(r) for r in prices],
-        "events":     [dict(r) for r in events],
-        "cat_colors": cat_colors,
-        "ticker":     ticker,
-    })
+        cat_colors = {
+            "DRL":"#ff4d4d","UPD":"#4d9fff","FR":"#4dff91",
+            "IR":"#a8ff4d","IOE":"#ff9f4d","ROI":"#ff9f4d",
+            "MSC":"#c84dff","NRA":"#666666","NOA":"#444444",
+            "RAG":"#444444","BOA":"#ffdd4d","AGR":"#4dffee",
+        }
+        return jsonify({
+            "prices":     [dict(r) for r in prices],
+            "events":     [dict(r) for r in events],
+            "cat_colors": cat_colors,
+            "ticker":     ticker,
+        })
+    except Exception as e:
+        import traceback
+        return jsonify({"error": str(e), "traceback": traceback.format_exc()}), 500
 
 
 @app.route("/backtest-data")
 def backtest_data():
     ticker = request.args.get("ticker", DEFAULT_TICKER).upper()
-    conn = get_connection()
+    try:
+        conn = get_connection()
 
     results = conn.execute("""
         SELECT b.*, e.datetime, e.category, e.headlinename,
@@ -372,6 +392,9 @@ def backtest_data():
         "strength_dist":    [dict(r) for r in strength_dist],
         "ticker":           ticker,
     })
+    except Exception as e:
+        import traceback
+        return jsonify({"error": str(e), "traceback": traceback.format_exc()}), 500
 
 
 @app.route("/health")
