@@ -10,10 +10,7 @@ from src.collect.html_cleaner import clean_html
 
 
 def fetch_rns_list(ticker=TICKER, issuer_name=ISSUER_NAME, max_pages=5):
-    """
-    Fetch paginated RNS list for a ticker from the LSE API.
-    Returns a flat list of announcement dicts.
-    """
+    """Fetch paginated RNS list for a ticker from the LSE API."""
     all_items = []
     page = 0
 
@@ -63,10 +60,7 @@ def fetch_rns_list(ticker=TICKER, issuer_name=ISSUER_NAME, max_pages=5):
 
 
 def fetch_rns_body(news_id):
-    """
-    Fetch full RNS body for a single announcement by numeric newsId.
-    Returns the full value dict (with body, title, rnsnumber etc.) or None.
-    """
+    """Fetch full RNS body for a single announcement."""
     payload = {
         "path": "news-article",
         "parameters": f"newsId%3D{news_id}",
@@ -102,13 +96,14 @@ def save_rns_list(items, ticker=TICKER):
         try:
             conn.execute("""
                 INSERT OR IGNORE INTO rns_events
-                    (id, ticker, rnsnumber, category, title, datetime)
-                VALUES (?, ?, ?, ?, ?, ?)
+                    (id, ticker, rnsnumber, category, headlinename, title, datetime)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
             """, (
                 item["id"],
                 ticker,
                 item.get("rnsnumber"),
                 item.get("category"),
+                item.get("headlinename"),
                 item.get("title"),
                 item.get("datetime"),
             ))
@@ -121,58 +116,60 @@ def save_rns_list(items, ticker=TICKER):
     print(f"  {inserted} new items saved to database")
 
 
-def enrich_rns_bodies(delay=2.0):
+def enrich_rns_bodies(ticker=None, delay=2.0):
     """
-    For every rns_event with fetch_status='pending',
-    fetch the full body text and update the database row.
+    Fetch full body text for all pending rns_events.
+    Optionally filter by ticker.
     """
     conn = get_connection()
-    rows = conn.execute("""
-        SELECT id, title FROM rns_events
-        WHERE fetch_status = 'pending'
-        ORDER BY datetime DESC
-    """).fetchall()
+    if ticker:
+        rows = conn.execute("""
+            SELECT id, title FROM rns_events
+            WHERE fetch_status = 'pending' AND ticker = ?
+            ORDER BY datetime DESC
+        """, (ticker,)).fetchall()
+    else:
+        rows = conn.execute("""
+            SELECT id, title FROM rns_events
+            WHERE fetch_status = 'pending'
+            ORDER BY datetime DESC
+        """).fetchall()
     conn.close()
 
     total = len(rows)
     print(f"  {total} announcements to enrich...")
 
-    for i, row in enumerate(rows):
+    for i, row in enumerate(rows, 1):
         news_id = row["id"]
         title   = row["title"] or ""
-        print(f"  [{i + 1}/{total}] id={news_id}  {title[:50]}")
+        print(f"  [{i}/{total}] {news_id} — {title[:50]}")
 
         try:
-            result = fetch_rns_body(news_id)
-            conn = get_connection()
-
-            if result and result.get("body"):
-                body_text = clean_html(result["body"])
-                conn.execute("""
-                    UPDATE rns_events SET
-                        body_html    = ?,
-                        body_text    = ?,
-                        headlinename = ?,
-                        fetch_status = 'ok'
-                    WHERE id = ?
-                """, (
-                    result["body"],
-                    body_text,
-                    result.get("headlinename"),
-                    news_id,
-                ))
-                print(f"    OK — {len(body_text)} chars plain text")
+            val = fetch_rns_body(news_id)
+            if not val:
+                status    = "no_content"
+                body_text = None
+                headline  = None
             else:
-                conn.execute(
-                    "UPDATE rns_events SET fetch_status = 'null' WHERE id = ?",
-                    (news_id,)
-                )
-                print(f"    NULL body — skipped")
-
-            conn.commit()
-            conn.close()
-
+                raw_body  = val.get("body", "") or ""
+                body_text = clean_html(raw_body)
+                headline  = val.get("headlineName") or val.get("headlinename")
+                status    = "ok"
         except Exception as e:
-            print(f"    ERROR: {e}")
+            print(f"    Error: {e}")
+            status    = "error"
+            body_text = None
+            headline  = None
 
-        time.sleep(delay)
+        conn = get_connection()
+        conn.execute("""
+            UPDATE rns_events
+            SET fetch_status=?, body_text=?,
+                headlinename=COALESCE(headlinename, ?)
+            WHERE id=?
+        """, (status, body_text, headline, news_id))
+        conn.commit()
+        conn.close()
+
+        if i < total:
+            time.sleep(delay)
