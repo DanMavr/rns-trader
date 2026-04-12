@@ -243,7 +243,7 @@ def chart_data():
             LEFT JOIN backtest_results b ON b.rns_id = e.id
             WHERE e.ticker=?
             ORDER BY e.datetime ASC
-        """, (ticker, ticker, ticker, ticker)).fetchall()
+        """, (ticker, ticker, ticker)).fetchall()
         conn.close()
 
         cat_colors = {
