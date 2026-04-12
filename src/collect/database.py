@@ -42,31 +42,49 @@ def init_db():
         );
 
         CREATE TABLE IF NOT EXISTS backtest_results (
-            id             INTEGER PRIMARY KEY AUTOINCREMENT,
-            rns_id         INTEGER NOT NULL,
-            ticker         TEXT    NOT NULL,
-            model_used     TEXT,
-            timing         TEXT,
-            llm_score      INTEGER,
-            llm_confidence TEXT,
-            llm_reason     TEXT,
-            would_trade    INTEGER DEFAULT 0,
-            direction      TEXT,
-            entry_price    REAL,
-            entry_time     TEXT,
-            price_t5       REAL,
-            price_t15      REAL,
-            price_t30      REAL,
-            price_t60      REAL,
-            price_eod      REAL,
-            return_t5      REAL,
-            return_t15     REAL,
-            return_t30     REAL,
-            return_t60     REAL,
-            return_eod     REAL,
-            outcome_t15    TEXT,
-            outcome_eod    TEXT,
-            created_at     TEXT    DEFAULT (datetime('now')),
+            id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+            rns_id              INTEGER NOT NULL,
+            ticker              TEXT    NOT NULL,
+            timing              TEXT,
+            category            TEXT,
+            category_priority   TEXT,
+            skipped_category    INTEGER DEFAULT 0,
+            price_position      REAL,
+            above_sma20         INTEGER,
+            ret5d               REAL,
+            ret60d              REAL,
+            pre_vol_ratio       REAL,
+            setup_quality       TEXT,
+            skipped_context     INTEGER DEFAULT 0,
+            reaction_triggered  INTEGER DEFAULT 0,
+            reaction_strength   REAL,
+            reaction_direction  INTEGER,
+            reaction_confidence REAL,
+            reaction_price_chg  REAL,
+            avg_vol_20d         REAL,
+            immediate_vol       REAL,
+            bars_found          INTEGER,
+            would_trade         INTEGER DEFAULT 0,
+            direction           TEXT,
+            entry_price         REAL,
+            entry_time          TEXT,
+            price_t5            REAL,
+            price_t15           REAL,
+            price_t30           REAL,
+            price_t60           REAL,
+            price_eod           REAL,
+            return_t5           REAL,
+            return_t15          REAL,
+            return_t30          REAL,
+            return_t60          REAL,
+            return_eod          REAL,
+            outcome_t15         TEXT,
+            outcome_eod         TEXT,
+            model_used          TEXT,
+            llm_score           INTEGER,
+            llm_confidence      TEXT,
+            llm_reason          TEXT,
+            created_at          TEXT DEFAULT (datetime('now')),
             FOREIGN KEY (rns_id) REFERENCES rns_events(id)
         );
 
@@ -76,8 +94,10 @@ def init_db():
             ON price_bars(ticker, interval, datetime);
         CREATE INDEX IF NOT EXISTS idx_backtest_rns
             ON backtest_results(rns_id);
-        CREATE INDEX IF NOT EXISTS idx_backtest_model
-            ON backtest_results(model_used);
+        CREATE INDEX IF NOT EXISTS idx_backtest_ticker
+            ON backtest_results(ticker);
+        CREATE INDEX IF NOT EXISTS idx_backtest_reaction
+            ON backtest_results(reaction_triggered, reaction_strength);
     """)
     conn.commit()
     conn.close()
