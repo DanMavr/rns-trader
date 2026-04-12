@@ -9,7 +9,7 @@ from src.collect.database import get_connection
 from src.collect.html_cleaner import clean_html
 
 
-def fetch_rns_list(ticker=TICKER, issuer_name=ISSUER_NAME, max_pages=5):
+def fetch_rns_list(ticker=TICKER, issuer_name=ISSUER_NAME, max_pages=20):
     """Fetch paginated RNS list for a ticker from the LSE API."""
     all_items = []
     page = 0
