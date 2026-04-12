@@ -8,16 +8,7 @@ app = Flask(__name__)
 @app.errorhandler(Exception)
 def handle_exception(e):
     import traceback
-    return jsonify({
-        "error": str(e),
-        "traceback": traceback.format_exc()
-    }), 500
-
-
-@app.errorhandler(500)
-def handle_500(e):
-    return jsonify({"error": "Internal server error", "detail": str(e)}), 500
-
+    return jsonify({"error": str(e), "traceback": traceback.format_exc()}), 500
 
 
 def get_connection():
@@ -97,13 +88,13 @@ def get_summary(ticker=DEFAULT_TICKER):
     if backtest_count > 0:
         backtest_summary = conn.execute("""
             SELECT
-                COUNT(*)                                               as total,
-                SUM(b.skipped_category)                                as cat_skipped,
-                SUM(b.skipped_context)                                 as ctx_skipped,
+                COUNT(*)                                                 as total,
+                SUM(b.skipped_category)                                  as cat_skipped,
+                SUM(b.skipped_context)                                   as ctx_skipped,
                 SUM(CASE WHEN b.reaction_triggered=1 THEN 1 ELSE 0 END) as reactions,
-                SUM(b.would_trade)                                     as trades,
-                SUM(CASE WHEN b.outcome_eod='WIN'  THEN 1 ELSE 0 END)  as wins,
-                SUM(CASE WHEN b.outcome_eod='LOSS' THEN 1 ELSE 0 END)  as losses,
+                SUM(b.would_trade)                                       as trades,
+                SUM(CASE WHEN b.outcome_eod='WIN'  THEN 1 ELSE 0 END)   as wins,
+                SUM(CASE WHEN b.outcome_eod='LOSS' THEN 1 ELSE 0 END)   as losses,
                 ROUND(AVG(CASE WHEN b.would_trade=1 THEN b.return_eod END),2) as avg_return,
                 ROUND(AVG(CASE WHEN b.would_trade=1 THEN b.reaction_strength END),2) as avg_strength
             FROM backtest_results b
@@ -111,40 +102,39 @@ def get_summary(ticker=DEFAULT_TICKER):
             WHERE e.ticker=?
         """, (ticker,)).fetchone()
 
-    # Cross-ticker summary (all tickers combined)
     all_tickers_stats = conn.execute("""
         SELECT e.ticker,
-               COUNT(DISTINCT e.id)                                       as rns_count,
-               SUM(b.would_trade)                                         as trades,
-               SUM(CASE WHEN b.outcome_eod='WIN' THEN 1 ELSE 0 END)       as wins,
+               COUNT(DISTINCT e.id)                                          as rns_count,
+               SUM(b.would_trade)                                            as trades,
+               SUM(CASE WHEN b.outcome_eod='WIN' THEN 1 ELSE 0 END)         as wins,
                ROUND(AVG(CASE WHEN b.would_trade=1 THEN b.return_eod END),2) as avg_return
         FROM rns_events e
         LEFT JOIN backtest_results b ON b.rns_id=e.id
         GROUP BY e.ticker
-        ORDER BY trades DESC NULLS LAST
+        ORDER BY trades DESC
     """).fetchall()
 
     conn.close()
 
     return dict(
-        ticker           = ticker,
-        ticker_name      = TICKERS.get(ticker, {}).get("name", ticker),
-        tickers          = {k: v["name"] for k, v in TICKERS.items()},
-        total_rns        = total_rns,
-        fetched_ok       = fetched_ok,
-        rns_from         = rns_from,
-        rns_to           = rns_to,
-        daily_bars       = daily_bars,
-        intraday_bars    = intraday_bars,
-        price_from       = price_from,
-        price_to         = price_to,
-        intra_from       = intra_from,
-        intra_to         = intra_to,
-        categories       = [dict(r) for r in categories],
-        recent           = [dict(r) for r in recent],
-        backtest_count   = backtest_count,
-        backtest_summary = dict(backtest_summary) if backtest_summary else None,
-        all_tickers_stats= [dict(r) for r in all_tickers_stats],
+        ticker            = ticker,
+        ticker_name       = TICKERS.get(ticker, {}).get("name", ticker),
+        tickers           = {k: v["name"] for k, v in TICKERS.items()},
+        total_rns         = total_rns,
+        fetched_ok        = fetched_ok,
+        rns_from          = rns_from,
+        rns_to            = rns_to,
+        daily_bars        = daily_bars,
+        intraday_bars     = intraday_bars,
+        price_from        = price_from,
+        price_to          = price_to,
+        intra_from        = intra_from,
+        intra_to          = intra_to,
+        categories        = [dict(r) for r in categories],
+        recent            = [dict(r) for r in recent],
+        backtest_count    = backtest_count,
+        backtest_summary  = dict(backtest_summary) if backtest_summary else None,
+        all_tickers_stats = [dict(r) for r in all_tickers_stats],
     )
 
 
@@ -279,119 +269,119 @@ def backtest_data():
     try:
         conn = get_connection()
 
-    results = conn.execute("""
-        SELECT b.*, e.datetime, e.category, e.headlinename,
-               e.title, e.id as event_id
-        FROM backtest_results b
-        JOIN rns_events e ON b.rns_id = e.id
-        WHERE e.ticker=?
-        ORDER BY e.datetime ASC
-    """, (ticker,)).fetchall()
+        results = conn.execute("""
+            SELECT b.*, e.datetime, e.category, e.headlinename,
+                   e.title, e.id as event_id
+            FROM backtest_results b
+            JOIN rns_events e ON b.rns_id = e.id
+            WHERE e.ticker=?
+            ORDER BY e.datetime ASC
+        """, (ticker,)).fetchall()
 
-    strength_buckets = conn.execute("""
-        SELECT
-            CASE
-                WHEN b.reaction_strength < 4  THEN '2-4×'
-                WHEN b.reaction_strength < 6  THEN '4-6×'
-                WHEN b.reaction_strength < 10 THEN '6-10×'
-                ELSE '10×+'
-            END as bucket,
-            COUNT(*) as total,
-            SUM(CASE WHEN b.outcome_eod='WIN' THEN 1 ELSE 0 END) as wins,
-            ROUND(AVG(b.return_eod),2) as avg_return
-        FROM backtest_results b
-        JOIN rns_events e ON b.rns_id=e.id
-        WHERE e.ticker=? AND b.would_trade=1 AND b.return_eod IS NOT NULL
-        GROUP BY bucket ORDER BY MIN(b.reaction_strength)
-    """, (ticker,)).fetchall()
+        strength_buckets = conn.execute("""
+            SELECT
+                CASE
+                    WHEN b.reaction_strength < 4  THEN '2-4x'
+                    WHEN b.reaction_strength < 6  THEN '4-6x'
+                    WHEN b.reaction_strength < 10 THEN '6-10x'
+                    ELSE '10x+'
+                END as bucket,
+                COUNT(*) as total,
+                SUM(CASE WHEN b.outcome_eod='WIN' THEN 1 ELSE 0 END) as wins,
+                ROUND(AVG(b.return_eod),2) as avg_return
+            FROM backtest_results b
+            JOIN rns_events e ON b.rns_id=e.id
+            WHERE e.ticker=? AND b.would_trade=1 AND b.return_eod IS NOT NULL
+            GROUP BY bucket ORDER BY MIN(b.reaction_strength)
+        """, (ticker,)).fetchall()
 
-    timing_results = conn.execute("""
-        SELECT b.timing,
-               COUNT(*) as total,
-               SUM(b.would_trade) as trades,
-               SUM(CASE WHEN b.outcome_eod='WIN' THEN 1 ELSE 0 END) as wins,
-               ROUND(AVG(CASE WHEN b.would_trade=1 THEN b.return_eod END),2) as avg_return
-        FROM backtest_results b
-        JOIN rns_events e ON b.rns_id=e.id
-        WHERE e.ticker=?
-        GROUP BY b.timing ORDER BY b.timing
-    """, (ticker,)).fetchall()
+        timing_results = conn.execute("""
+            SELECT b.timing,
+                   COUNT(*) as total,
+                   SUM(b.would_trade) as trades,
+                   SUM(CASE WHEN b.outcome_eod='WIN' THEN 1 ELSE 0 END) as wins,
+                   ROUND(AVG(CASE WHEN b.would_trade=1 THEN b.return_eod END),2) as avg_return
+            FROM backtest_results b
+            JOIN rns_events e ON b.rns_id=e.id
+            WHERE e.ticker=?
+            GROUP BY b.timing ORDER BY b.timing
+        """, (ticker,)).fetchall()
 
-    cat_results = conn.execute("""
-        SELECT b.category,
-               COUNT(*) as total,
-               SUM(b.skipped_category) as skipped,
-               SUM(b.would_trade) as trades,
-               SUM(CASE WHEN b.outcome_eod='WIN' THEN 1 ELSE 0 END) as wins,
-               ROUND(AVG(CASE WHEN b.would_trade=1 THEN b.return_eod END),2) as avg_return,
-               ROUND(AVG(b.reaction_strength),2) as avg_strength
-        FROM backtest_results b
-        JOIN rns_events e ON b.rns_id=e.id
-        WHERE e.ticker=?
-        GROUP BY b.category ORDER BY trades DESC, total DESC
-    """, (ticker,)).fetchall()
+        cat_results = conn.execute("""
+            SELECT b.category,
+                   COUNT(*) as total,
+                   SUM(b.skipped_category) as skipped,
+                   SUM(b.would_trade) as trades,
+                   SUM(CASE WHEN b.outcome_eod='WIN' THEN 1 ELSE 0 END) as wins,
+                   ROUND(AVG(CASE WHEN b.would_trade=1 THEN b.return_eod END),2) as avg_return,
+                   ROUND(AVG(b.reaction_strength),2) as avg_strength
+            FROM backtest_results b
+            JOIN rns_events e ON b.rns_id=e.id
+            WHERE e.ticker=?
+            GROUP BY b.category ORDER BY trades DESC, total DESC
+        """, (ticker,)).fetchall()
 
-    setup_results = conn.execute("""
-        SELECT b.setup_quality,
-               COUNT(*) as total,
-               SUM(b.would_trade) as trades,
-               SUM(CASE WHEN b.outcome_eod='WIN' THEN 1 ELSE 0 END) as wins,
-               ROUND(AVG(CASE WHEN b.would_trade=1 THEN b.return_eod END),2) as avg_return
-        FROM backtest_results b
-        JOIN rns_events e ON b.rns_id=e.id
-        WHERE e.ticker=? AND b.setup_quality IS NOT NULL
-        GROUP BY b.setup_quality
-    """, (ticker,)).fetchall()
+        setup_results = conn.execute("""
+            SELECT b.setup_quality,
+                   COUNT(*) as total,
+                   SUM(b.would_trade) as trades,
+                   SUM(CASE WHEN b.outcome_eod='WIN' THEN 1 ELSE 0 END) as wins,
+                   ROUND(AVG(CASE WHEN b.would_trade=1 THEN b.return_eod END),2) as avg_return
+            FROM backtest_results b
+            JOIN rns_events e ON b.rns_id=e.id
+            WHERE e.ticker=? AND b.setup_quality IS NOT NULL
+            GROUP BY b.setup_quality
+        """, (ticker,)).fetchall()
 
-    trades = conn.execute("""
-        SELECT e.datetime, b.direction, b.return_eod, b.return_t15,
-               b.outcome_eod, b.reaction_strength, b.reaction_price_chg,
-               e.title, e.category, b.entry_price
-        FROM backtest_results b
-        JOIN rns_events e ON b.rns_id = e.id
-        WHERE e.ticker=? AND b.would_trade=1
-        ORDER BY e.datetime ASC
-    """, (ticker,)).fetchall()
+        trades = conn.execute("""
+            SELECT e.datetime, b.direction, b.return_eod, b.return_t15,
+                   b.outcome_eod, b.reaction_strength, b.reaction_price_chg,
+                   e.title, e.category, b.entry_price
+            FROM backtest_results b
+            JOIN rns_events e ON b.rns_id = e.id
+            WHERE e.ticker=? AND b.would_trade=1
+            ORDER BY e.datetime ASC
+        """, (ticker,)).fetchall()
 
-    cum_pnl = []
-    running = 0.0
-    for t in trades:
-        ret = t["return_eod"] or 0
-        running += ret
-        cum_pnl.append({
-            "date":      t["datetime"][:10],
-            "title":     t["title"],
-            "category":  t["category"],
-            "direction": t["direction"],
-            "return":    round(ret, 2),
-            "cumulative":round(running, 2),
-            "outcome":   t["outcome_eod"],
-            "strength":  t["reaction_strength"],
-            "price_chg": t["reaction_price_chg"],
-            "entry":     t["entry_price"],
+        cum_pnl = []
+        running = 0.0
+        for t in trades:
+            ret = t["return_eod"] or 0
+            running += ret
+            cum_pnl.append({
+                "date":       t["datetime"][:10],
+                "title":      t["title"],
+                "category":   t["category"],
+                "direction":  t["direction"],
+                "return":     round(ret, 2),
+                "cumulative": round(running, 2),
+                "outcome":    t["outcome_eod"],
+                "strength":   t["reaction_strength"],
+                "price_chg":  t["reaction_price_chg"],
+                "entry":      t["entry_price"],
+            })
+
+        strength_dist = conn.execute("""
+            SELECT ROUND(b.reaction_strength,0) as s, COUNT(*) as n
+            FROM backtest_results b
+            JOIN rns_events e ON b.rns_id=e.id
+            WHERE e.ticker=? AND b.reaction_strength > 0
+            GROUP BY ROUND(b.reaction_strength,0)
+            ORDER BY s ASC
+        """, (ticker,)).fetchall()
+
+        conn.close()
+
+        return jsonify({
+            "results":          [dict(r) for r in results],
+            "strength_buckets": [dict(r) for r in strength_buckets],
+            "timing_results":   [dict(r) for r in timing_results],
+            "cat_results":      [dict(r) for r in cat_results],
+            "setup_results":    [dict(r) for r in setup_results],
+            "cum_pnl":          cum_pnl,
+            "strength_dist":    [dict(r) for r in strength_dist],
+            "ticker":           ticker,
         })
-
-    strength_dist = conn.execute("""
-        SELECT ROUND(b.reaction_strength,0) as s, COUNT(*) as n
-        FROM backtest_results b
-        JOIN rns_events e ON b.rns_id=e.id
-        WHERE e.ticker=? AND b.reaction_strength > 0
-        GROUP BY ROUND(b.reaction_strength,0)
-        ORDER BY s ASC
-    """, (ticker,)).fetchall()
-
-    conn.close()
-
-    return jsonify({
-        "results":          [dict(r) for r in results],
-        "strength_buckets": [dict(r) for r in strength_buckets],
-        "timing_results":   [dict(r) for r in timing_results],
-        "cat_results":      [dict(r) for r in cat_results],
-        "setup_results":    [dict(r) for r in setup_results],
-        "cum_pnl":          cum_pnl,
-        "strength_dist":    [dict(r) for r in strength_dist],
-        "ticker":           ticker,
-    })
     except Exception as e:
         import traceback
         return jsonify({"error": str(e), "traceback": traceback.format_exc()}), 500
@@ -399,7 +389,7 @@ def backtest_data():
 
 @app.route("/health")
 def health():
-    return {"status": "ok", "port": 5001}
+    return jsonify({"status": "ok", "port": 5001})
 
 
 if __name__ == "__main__":
