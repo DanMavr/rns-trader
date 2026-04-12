@@ -574,8 +574,7 @@ function populateDrawer(d){
 }
 
 function fmtText(text){
-  const lines=text.split('
-');let html='',inList=false;
+  const lines=text.split('\n');let html='',inList=false;
   lines.forEach(line=>{
     const t=line.trim();
     if(!t){if(inList){html+='</ul>';inList=false;}return;}
