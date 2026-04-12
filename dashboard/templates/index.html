@@ -3,8 +3,7 @@
 <head>
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>RNS Trader — MATD</title>
-  
+  <title>RNS Trader — {{ ticker }}</title>
   <style>
     *{box-sizing:border-box;margin:0;padding:0}
     body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
@@ -128,16 +127,50 @@
     .rns-text ul{margin:6px 0 10px 20px}
     .rns-text li{margin-bottom:4px}
     #drawer-loading{text-align:center;padding:60px 0;color:#555}
+
+    /* TICKER SELECTOR */
+    .ticker-selector{display:flex;align-items:center;gap:8px;margin-bottom:14px;flex-wrap:wrap}
+    .ticker-btn{padding:5px 14px;border-radius:20px;border:1px solid #2a2d3e;
+                background:#1c1f2e;color:#888;font-size:.8rem;font-weight:600;
+                cursor:pointer;text-decoration:none;transition:all .15s;white-space:nowrap}
+    .ticker-btn:hover{color:#fff;border-color:#4d9fff}
+    .ticker-btn.active{background:#4d9fff;color:#fff;border-color:#4d9fff}
+    .ticker-label{color:#555;font-size:.78rem;font-weight:600;
+                  text-transform:uppercase;letter-spacing:.06em;white-space:nowrap}
+    /* ALL TICKERS TABLE */
+    .all-tickers-grid{display:grid;
+                      grid-template-columns:repeat(auto-fit,minmax(180px,1fr));
+                      gap:10px;margin-bottom:22px}
+    .ticker-card{background:#1c1f2e;border:1px solid #2a2d3e;border-radius:8px;
+                 padding:12px 14px;cursor:pointer;text-decoration:none;
+                 display:block;transition:border-color .15s}
+    .ticker-card:hover{border-color:#4d9fff}
+    .ticker-card .tc-ticker{font-size:1.1rem;font-weight:800;color:#fff}
+    .ticker-card .tc-name{font-size:.72rem;color:#666;margin:2px 0 8px;
+                          white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .ticker-card .tc-stats{display:flex;gap:10px;font-size:.75rem}
+    .ticker-card .tc-rns{color:#888}
+    .ticker-card .tc-trades{color:#4caf7d;font-weight:600}
+    .ticker-card .tc-wr{font-weight:600}
+
   </style>
 </head>
 <body>
 
 <div class="topbar">
-  <h1>&#128200; RNS Trader &#8212; MATD Dashboard</h1>
+  <h1>&#128200; RNS Trader &#8212; {{ ticker }} Dashboard</h1>
   <p class="subtitle">
-    Petro Matad Limited (AIM: MATD) &nbsp;&middot;&nbsp;
+    {{ ticker_name }} (AIM: {{ ticker }}) &nbsp;&middot;&nbsp;
     RNS: {{ rns_from }} &rarr; {{ rns_to }}
   </p>
+  <div class="ticker-selector">
+    <span class="ticker-label">Switch:</span>
+    {% for t, name in tickers.items() %}
+    <a href="/?ticker={{ t }}"
+       class="ticker-btn {% if t == ticker %}active{% endif %}"
+       title="{{ name }}">{{ t }}</a>
+    {% endfor %}
+  </div>
   <div class="tabs">
     <div class="tab active" onclick="switchTab('summary',this)">&#128202; Summary</div>
     <div class="tab" onclick="switchTab('chart',this)">&#128201; Price Chart</div>
@@ -233,6 +266,32 @@
       {% endif %}
     </div>
 
+  </div>
+
+  <div class="section-title">All Tickers Overview
+    <span class="hint">&#8212; click to switch</span>
+  </div>
+  <div class="all-tickers-grid">
+    {% for row in all_tickers_stats %}
+    {% set wr = (row.wins / row.trades * 100)|int if row.trades else none %}
+    <a href="/?ticker={{ row.ticker }}"
+       class="ticker-card {% if row.ticker == ticker %}active{% endif %}"
+       style="{% if row.ticker == ticker %}border-color:#4d9fff{% endif %}">
+      <div class="tc-ticker">{{ row.ticker }}</div>
+      <div class="tc-name">{{ tickers.get(row.ticker, row.ticker) }}</div>
+      <div class="tc-stats">
+        <span class="tc-rns">{{ row.rns_count }} RNS</span>
+        {% if row.trades %}
+          <span class="tc-trades">{{ row.trades }} trades</span>
+          <span class="tc-wr" style="color:{% if wr >= 50 %}#4caf7d{% elif wr >= 40 %}#f0a500{% else %}#f07070{% endif %}">
+            {{ wr }}% WR
+          </span>
+        {% else %}
+          <span style="color:#555">no backtest</span>
+        {% endif %}
+      </div>
+    </a>
+    {% endfor %}
   </div>
 
   <div class="section-title">Announcements by Category</div>
@@ -476,6 +535,9 @@
 
 
 <script>
+// Get current ticker from URL
+var _ticker = new URLSearchParams(window.location.search).get('ticker') || 'MATD';
+
 function switchTab(name,el){
   document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
   document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));
@@ -595,7 +657,7 @@ function esc(s){
 
 function loadChart(){
   window._chartLoaded=true;
-  fetch('/chart-data').then(r=>r.json()).then(data=>{
+  fetch('/chart-data?ticker='+_ticker).then(r=>r.json()).then(data=>{
     window._chartData=data;renderPriceChart(data);renderChartTable(data);
   }).catch(e=>{document.getElementById('chart-loading').textContent='Error: '+e;});
 }
@@ -604,7 +666,7 @@ function renderPriceChart(data){
   const prices=data.prices,events=data.events,catColors=data.cat_colors;
   const priceLine={
     x:prices.map(p=>p.datetime.substring(0,10)),y:prices.map(p=>p.close),
-    type:'scatter',mode:'lines',name:'MATD Close (p)',
+    type:'scatter',mode:'lines',name:_ticker+' Close (p)',
     line:{color:'#4d9fff',width:2},
     hovertemplate:'%{x}<br>Close: %{y:.2f}p<extra></extra>'
   };
@@ -680,7 +742,7 @@ function loadAnalysis(){
   document.getElementById('analysis-loading').style.display='block';
   document.getElementById('analysis-content').style.display='none';
   document.getElementById('analysis-empty').style.display='none';
-  fetch('/backtest-data').then(r=>r.json()).then(data=>{
+  fetch('/backtest-data?ticker='+_ticker).then(r=>r.json()).then(data=>{
     document.getElementById('analysis-loading').style.display='none';
     if(!data.results||!data.results.length){
       document.getElementById('analysis-empty').style.display='block';return;
