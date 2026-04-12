@@ -15,10 +15,13 @@ You understand that for small AIM companies:
 - Any specific numerical improvement vs prior period = positive signal
 - Words like "pleased", "significant", "maiden" = positive
 - Words like "delay", "below", "suspended", "dry" = negative
+
+You must respond with ONLY a JSON object, no other text.
 """
 
 
-def build_user_prompt(ticker, company_name, category, headlinename, title, body_text):
+def build_user_prompt(ticker, company_name, category, headlinename,
+                      title, body_text):
     return f"""Company: {company_name} ({ticker}), AIM-listed
 Sector: Oil exploration and production, Mongolia
 RNS Category code: {category}
@@ -38,5 +41,9 @@ after this announcement is published, on this scale:
 -1 = Mildly negative  (bad news, price likely down 1-5%)
 -2 = Strong negative  (major bad news, price likely down 5%+)
 
-Return ONLY valid JSON, no other text:
-{{"score": <integer -2 to 2>, "confidence": "<low|medium|high>", "reason": "<one sentence>"}}"""
+Respond with ONLY this JSON, no other text:
+{{
+  "score": <integer from -2 to +2>,
+  "confidence": "<low|medium|high>",
+  "reason": "<one sentence, max 20 words>"
+}}"""
