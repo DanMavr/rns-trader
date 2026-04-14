@@ -1,249 +1,107 @@
 # RNS Trader
 
-A systematic trading signal detector for AIM-listed oil & gas companies, built on the London Stock Exchange RNS (Regulatory News Service) feed.
+A data-driven trading signal research platform for AIM-listed oil & gas companies, built on the London Stock Exchange RNS (Regulatory News Service) feed.
 
 ---
 
 ## What it does
 
-AIM-listed resource stocks often move sharply in the first minutes of trading after a material announcement — a drilling result, fundraise, or production update. RNS Trader detects these moves by watching for an abnormal spike in trading volume combined with a significant price change at open. A historical backtest across all past announcements shows which announcement types, market setups, and timing conditions have produced the best outcomes.
+Collects every regulatory announcement (RNS) for a universe of 32 AIM-listed oil & gas companies, pairs each announcement with daily OHLCV price data, and builds a flat feature table that enables assumption-free statistical analysis of what actually predicts forward returns — and what doesn't.
+
+The goal is to find the top ~10% of RNS events that produce meaningful, statistically supported forward price moves, derive trading rules entirely from the data, and validate them out-of-sample before any live use.
 
 ---
 
-## Signal logic
+## Methodology
 
-Every RNS event passes through 3 sequential filters:
+### Principle: data first, assumptions never
+
+Every threshold, every filter, every rule must be derived from the data — not assumed. The workflow enforces this with a strict 4-phase process:
 
 ```
-RNS EVENT
-    │
-    ▼
-┌─────────────────────────────────────┐
-│ FILTER 1: Category                  │
-│ Is this announcement worth watching?│
-│                                     │
-│ SKIP:  NOA, RAG, BOA, NRA, AGR      │
-│        (routine admin)              │
-│ WATCH: UPD, MSC, IOE, ROI, FR, IR  │
-│ HIGH:  DRL, ROI, FR, IR             │
-└──────────────┬──────────────────────┘
-               │ pass
-               ▼
-┌─────────────────────────────────────┐
-│ FILTER 2: Context                   │
-│ Is the stock in a tradeable setup?  │
-│                                     │
-│ Checks:                             │
-│  · Price position in 52-week range  │
-│  · Above/below 20-day moving avg    │
-│  · Pre-announcement volume trend    │
-│  · 60-day momentum (skip if >150%)  │
-│                                     │
-│ Output: strong / neutral /          │
-│         extended / skip             │
-└──────────────┬──────────────────────┘
-               │ pass
-               ▼
-┌─────────────────────────────────────┐
-│ FILTER 3: Reaction detector         │
-│ Did the market actually react?      │
-│                                     │
-│ Measures first 3 × 5-min bars       │
-│ after announcement window opens:    │
-│                                     │
-│ TRIGGER if:                         │
-│  · Volume > 4× 20-day average  AND  │
-│  · Price move > 3.5%                │
-│                                     │
-│ Output: direction (BUY/SELL)        │
-│         strength (e.g. 6.2×)        │
-│         confidence (0.0–1.0)        │
-└──────────────┬──────────────────────┘
-               │ triggered
-               ▼
-        RECORD TRADE
-        Entry price, T+15, T+30,
-        T+60, EOD returns
-        WIN / LOSS outcome
+Phase 1 — Ingest
+  Collect RNS events + daily price bars for all 32 tickers
+  Extract one feature row per event: reaction metrics, pre-RNS
+  context, and forward returns at every horizon (D+1 through D+20)
+  No filtering. No thresholds. Raw observations only.
+
+Phase 2 — Explore
+  Analyse distributions across every measurable factor
+  Factor-by-factor decile analysis vs forward returns
+  Identify which factors separate good outcomes from noise
+  Require t-stat > 2.0 and n > 20 before drawing any conclusion
+
+Phase 3 — Validate
+  Apply only the rules the data itself suggested
+  Strict in-sample / out-of-sample time split
+  2024 = discovery period, 2025-2026 = validation period
+  Rules are fixed at end of discovery — no adjustments allowed
+
+Phase 4 — Expand
+  Add more same-sector tickers to increase sample size
+  Re-validate with larger dataset
+  Only proceed to live use once out-of-sample T > 2.0
 ```
+
+### What the data showed (April 2026, 11 tickers, 675 events)
+
+**Base rate:** RNS events alone predict nothing. Mean forward return ~0% at every horizon. Win rate 31-40%. The null hypothesis holds for the general population.
+
+**The one real signal:** Volume ratio (reaction day volume / 20-day average volume). The top decile (>4.5× average) shows consistent positive forward drift:
+- D+2: +2.7% mean, T=2.04 ✅
+- D+3: +3.1% mean, T=2.15 ✅
+- D+5: +4.0% mean, T=1.87
+
+**Direction matters:** High volume + stock closes UP on RNS day → +6.9% from next open over 5 days. High volume + closes DOWN → only +0.8%.
+
+**Categories:** UPD (operational updates) produce no edge even with high volume. DRL (drilling results) + high volume = T=2.52 but only 4 events — directionally confirmed, insufficient sample.
+
+**Optimal hold:** 3-5 trading days from next day's open.
+
+**Out-of-sample (2025-2026):** 11 trades, 72.7% win rate at D+10, mean +5.5%. Signal did not degrade.
+
+**Honest constraint:** 19 total qualifying trades across 2 years × 11 tickers is too small for definitive conclusions. T-stats are 1.75-1.94 — approaching but not at 2.0. The expansion to 32 tickers is intended to resolve this.
+
+---
+
+## Data quality notes
+
+- **88E stock consolidation (May 2025):** Yahoo Finance did not adjust the historical series. A 1-day forward return of +1796% was identified and removed. Any forward return window crossing a known price discontinuity is set to NULL.
+- **Duplicate RNS dates:** Multiple announcements on the same day map to the same price bar. Deduplicated by keeping the highest-priority category per ticker per date.
+- **Zero-volume bars:** Ghost bars (vol=0) from split/consolidation days are removed.
 
 ---
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                        RNS TRADER                           │
-├──────────────┬──────────────┬──────────────┬────────────────┤
-│   COLLECT    │   REACT      │   BACKTEST   │   DASHBOARD    │
-│              │              │              │                │
-│ rns_fetcher  │ category_    │ simulator.py │ app.py         │
-│ .py          │ filter.py    │              │ index.html     │
-│              │              │              │                │
-│ price_       │ context_     │ run_         │                │
-│ fetcher.py   │ filter.py    │ backtest.py  │                │
-│              │              │              │                │
-│ database.py  │ reaction_    │              │                │
-│              │ detector.py  │              │                │
-└──────────────┴──────────────┴──────────────┴────────────────┘
-         ↓              ↓              ↓
-    SQLite DB      Signal logic    Results DB
-    (rns_events,   (3 filters)     (backtest_
-    price_bars)                     results)
-```
-
----
-
-## Data flow
-
-```
-SCHEDULED (daily, 07:30 UK):
-  run_collect.py
-      │
-      ├─ LSE API → fetch new RNS for each ticker
-      ├─ LSE API → fetch full body text for new RNS
-      └─ Yahoo Finance → fetch daily + 5-min price bars
-             │
-             ▼
-         SQLite DB
-         /data/matd_backtest.db
-             │
-             ├─ rns_events       (announcements)
-             ├─ price_bars       (OHLCV, 1d + 5m)
-             └─ backtest_results (signal outcomes)
-
-ON DEMAND:
-  run_backtest.py
-      │
-      └─ Loops all tickers × all RNS events
-         Runs 3 filters, detects reactions,
-         calculates returns, saves to backtest_results
-
-ALWAYS ON (systemd service):
-  run_dashboard.py → Flask on port 5001
-      │
-      ├─ GET /              → Summary tab
-      ├─ GET /chart-data    → Price Chart tab
-      ├─ GET /backtest-data → Analysis tab
-      └─ GET /rns/<id>      → Drawer detail
-```
-
----
-
-## Tickers
-
-12 AIM-listed oil & gas juniors:
-
-| Ticker | Company |
-|--------|---------|
-| MATD | Petro Matad Limited |
-| 88E  | 88 Energy Ltd |
-| CHAR | Chariot Limited |
-| PTAL | PetroTal Corporation |
-| UJO  | Union Jack Oil plc |
-| ZEN  | Zenith Energy Ltd |
-| BOR  | Borders & Southern Petroleum plc |
-| AXL  | Arrow Exploration Corp |
-| PANR | Pantheon Resources plc |
-| KIST | Kistos Holdings plc |
-| SOUC | Southern Energy Corp |
-| BLOE | Block Energy plc |
-
----
-
-## File map
-
-```
 rns-trader/
 ├── config/
-│   └── settings.py            # All constants, ticker list, API keys
+│   └── settings.py          # 32 verified tickers with LSE slugs
+│
+├── scripts/
+│   ├── run_collect.py        # Collect RNS + prices for all tickers
+│   ├── extract_features.py   # Build feature table (Phase 1)
+│   └── run_backtest.py       # Rule-based backtest (Phase 3)
+│
 ├── src/
 │   ├── collect/
-│   │   ├── database.py        # SQLite schema + connection
-│   │   ├── rns_fetcher.py     # LSE API: RNS list + body fetch
-│   │   ├── price_fetcher.py   # Yahoo Finance OHLCV download
-│   │   └── html_cleaner.py    # Strip HTML from RNS body text
+│   │   ├── database.py       # SQLite schema + connection
+│   │   ├── rns_fetcher.py    # LSE API → rns_events table
+│   │   └── price_fetcher.py  # Yahoo Finance → price_bars table
+│   │
 │   ├── react/
-│   │   ├── category_filter.py   # Filter 1: skip/watch/high priority
-│   │   ├── context_filter.py    # Filter 2: price setup quality
-│   │   └── reaction_detector.py # Filter 3: volume + price spike
-│   ├── backtest/
-│   │   └── simulator.py       # Main backtest loop, calls all 3 filters
-│   └── score/
-│       ├── scorer.py          # Grok LLM scoring (optional)
-│       └── prompts.py         # LLM prompt templates
-├── scripts/
-│   ├── run_collect.py         # Entry point: collect data
-│   ├── run_backtest.py        # Entry point: run backtest
-│   └── run_dashboard.py       # Entry point: start Flask
-└── dashboard/
-    ├── app.py                 # Flask routes + SQL queries
-    └── templates/
-        └── index.html         # Single-page dashboard UI
-```
-
----
-
-## Setup
-
-### Requirements
-
-- Raspberry Pi (or any Linux box)
-- Python 3.10+
-- Internet access to LSE and Yahoo Finance
-
-### Install
-
-```bash
-git clone https://github.com/DanMavr/rns-trader.git
-cd rns-trader
-python3 -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
-```
-
-### Configure
-
-```bash
-cp .env.example .env
-# Edit .env and add your xAI API key (optional — only needed for LLM scoring)
-```
-
-### Collect data
-
-```bash
-# All tickers
-python scripts/run_collect.py
-
-# Specific tickers
-python scripts/run_collect.py MATD PANR
-```
-
-### Run backtest
-
-```bash
-# All tickers
-python scripts/run_backtest.py
-
-# Single ticker
-python scripts/run_backtest.py MATD
-
-# With Grok LLM scoring
-python scripts/run_backtest.py --llm
-```
-
-### Start dashboard
-
-```bash
-python scripts/run_dashboard.py
-# Open http://localhost:5001
-```
-
-### Run as a service (Raspberry Pi)
-
-```bash
-sudo systemctl enable rns-trader-dashboard
-sudo systemctl start rns-trader-dashboard
+│   │   ├── category_filter.py   # Skip routine admin categories
+│   │   ├── context_filter.py    # Pre-RNS price/volume context
+│   │   └── reaction_detector.py # Daily bar signal detection
+│   │
+│   └── backtest/
+│       └── simulator.py      # Applies rules, records results
+│
+└── data/
+    ├── matd_backtest.db      # SQLite database
+    ├── features.csv          # Raw feature table (Phase 1 output)
+    └── features_clean.csv    # Cleaned (discontinuities + dupes removed)
 ```
 
 ---
@@ -251,119 +109,97 @@ sudo systemctl start rns-trader-dashboard
 ## Database schema
 
 ### `rns_events`
-| Column | Type | Description |
-|--------|------|-------------|
-| id | INTEGER | LSE announcement ID |
-| ticker | TEXT | Stock ticker |
-| rnsnumber | TEXT | RNS reference number |
-| category | TEXT | LSE category code (DRL, UPD, FR, etc.) |
-| headlinename | TEXT | Human-readable category name |
-| title | TEXT | Announcement title |
-| datetime | TEXT | Publication datetime (ISO 8601) |
-| body_text | TEXT | Full announcement text (cleaned) |
-| fetch_status | TEXT | pending / ok / error / no_content |
+One row per RNS announcement. Fetched from the LSE API.
+
+| Column | Description |
+|---|---|
+| id | LSE announcement ID |
+| ticker | Stock ticker |
+| datetime | Publication timestamp |
+| category | LSE category code (DRL, UPD, MSC, FR, etc.) |
+| title | Headline |
+| body_text | Full announcement text |
+| fetch_status | `ok` / `error` |
 
 ### `price_bars`
-| Column | Type | Description |
-|--------|------|-------------|
-| ticker | TEXT | Stock ticker |
-| interval | TEXT | 1d or 5m |
-| datetime | TEXT | Bar datetime (ISO 8601) |
-| open/high/low/close | REAL | Price in pence |
-| volume | INTEGER | Shares traded |
+Daily OHLCV bars from Yahoo Finance (2 years history).
+
+| Column | Description |
+|---|---|
+| ticker | Stock ticker |
+| datetime | Bar date |
+| interval | Always `1d` |
+| open / high / low / close | Prices in GBX (pence) |
+| volume | Shares traded |
 
 ### `backtest_results`
-| Column | Type | Description |
-|--------|------|-------------|
-| rns_id | INTEGER | FK → rns_events.id |
-| ticker | TEXT | Stock ticker |
-| category | TEXT | LSE category code |
-| category_priority | TEXT | high / watch / skip |
-| skipped_category | INTEGER | 1 if skipped by filter 1 |
-| setup_quality | TEXT | strong / neutral / extended / skip |
-| skipped_context | INTEGER | 1 if skipped by filter 2 |
-| timing | TEXT | pre_market / intraday |
-| reaction_triggered | INTEGER | 1 if volume+price spike detected |
-| reaction_strength | REAL | Volume multiple (e.g. 6.2) |
-| reaction_direction | TEXT | BUY / SELL |
-| reaction_confidence | REAL | 0.0–1.0 |
-| reaction_price_chg | REAL | % price change in reaction window |
-| avg_vol_20d | INTEGER | 20-day average daily volume |
-| immediate_vol | INTEGER | Volume in reaction window |
-| bars_found | INTEGER | Number of 5-min bars found |
-| entry_price | REAL | Price at trade entry (pence) |
-| return_t15 | REAL | % return at T+15 min |
-| return_t30 | REAL | % return at T+30 min |
-| return_t60 | REAL | % return at T+60 min |
-| return_eod | REAL | % return at end of day |
-| outcome_t15 | TEXT | WIN / LOSS at T+15 |
-| outcome_eod | TEXT | WIN / LOSS at EOD |
-| would_trade | INTEGER | 1 if all filters passed |
-| llm_score | INTEGER | Grok score 1–5 (optional) |
-| model_used | TEXT | LLM model name (optional) |
+One row per evaluated RNS event.
+
+| Column | Description |
+|---|---|
+| reaction_triggered | 1 if signal fired |
+| reaction_strength | volume / avg_vol_20d |
+| price_change_pct | (close - open) / open % |
+| would_trade | 1 if all filters passed |
+| return_eod | EOD return on reaction day |
+| outcome_eod | WIN / LOSS |
 
 ---
 
-## Category codes
+## Setup
 
-| Code | Description | Priority |
-|------|-------------|----------|
-| DRL | Drilling / well results | HIGH |
-| FR  | Final results | HIGH |
-| IR  | Interim results | HIGH |
-| ROI | Results of placing / offer | HIGH |
-| UPD | Operational update | WATCH |
-| MSC | Miscellaneous | WATCH |
-| IOE | Issue of equity | WATCH |
-| BOA | Board changes | SKIP |
-| NOA | Notice of AGM | SKIP |
-| RAG | Result of AGM | SKIP |
-| NRA | Non-regulatory announcement | SKIP |
-| AGR | Agreement | SKIP |
+```bash
+git clone https://github.com/DanMavr/rns-trader
+cd rns-trader
+pip install -r requirements.txt
 
----
+# Collect data for all 32 tickers (~30-40 minutes)
+python scripts/run_collect.py
 
-## LLM scoring (optional)
+# Extract feature table
+python scripts/extract_features.py
 
-When run with `--llm`, each triggered event is scored by Grok (xAI) on a 1–5 scale:
-
-- **5** — Transformational news, major catalyst
-- **4** — Strong positive, likely sustained move
-- **3** — Moderate interest, directional but uncertain
-- **2** — Minor news, limited follow-through expected
-- **1** — Neutral or negative, avoid
-
-Requires `XAI_API_KEY` in `.env`.
+# Run backtest
+python scripts/run_backtest.py
+```
 
 ---
 
-## Dashboard
+## Ticker universe
 
-Accessible at `http://raspberrypi.local:5001`
+32 AIM-listed oil & gas companies. All LSE slugs verified from live URLs (April 2026).
 
-| Tab | Contents |
-|-----|----------|
-| Summary | RNS counts, price data coverage, category breakdown, recent announcements, all-tickers overview |
-| Price Chart | Interactive Plotly candlestick chart with RNS event markers, colour-coded by category |
-| Backtest Analysis | Win rate by reaction strength, timing, category, setup quality. Cumulative P&L curve. Full event table |
+**Original 11:** MATD, 88E, CHAR, PTAL, UJO, ZEN, BOR, AXL, PANR, KIST, BLOE
 
-Click any announcement row to open a detail drawer with the full RNS text and backtest result.
+**Tier 1 additions (£20m-£750m market cap):**
+RKH, ECO, AET, FOG, SEI, SAVE, JSE, ZPHR, SEA, JOG, TXP, PMG, STAR
 
----
-
-## Limitations
-
-- **Intraday data:** Yahoo Finance only provides 60 days of 5-min bars for free. Reaction detection on events older than 60 days falls back to daily bar analysis.
-- **Execution:** This is a signal detection system, not a broker integration. Trade execution is manual.
-- **Survivorship bias:** Only currently-listed tickers are tracked. Delisted companies are excluded.
-- **LSE API:** Uses undocumented LSE web API endpoints. Subject to change without notice.
+**Tier 2 additions (£8m-£55m market cap, smaller/less liquid):**
+ENW, CASP, PXEN, EOG, ORCA, EPP, SOU, UOG
 
 ---
 
-## Roadmap
+## Current status
 
-- [ ] Broker API integration (Interactive Brokers / Alpaca)
-- [ ] Live intraday monitoring with alert notifications
-- [ ] Expand ticker universe beyond oil & gas
-- [ ] Alpha Vantage integration for extended intraday history
-- [ ] Multi-strategy backtesting framework
+| Metric | Value |
+|---|---|
+| Tickers | 32 |
+| RNS events (11 tickers) | 1,003 |
+| Feature rows (clean) | 675 |
+| Qualifying trades (Phase 3 rules) | 19 |
+| Out-of-sample win rate (D+10) | 72.7% |
+| Out-of-sample T-stat (D+10) | 1.46 |
+| Combined T-stat (D+3) | 1.79 |
+| Statistical significance | Not yet (target T > 2.0) |
+| Next milestone | Re-run analysis with 32 tickers |
+
+---
+
+## What this is not
+
+- Not a live trading system
+- Not financial advice
+- Not a black box — every rule has a documented data source
+- Not complete — sample size is the current binding constraint
+
+The signal is directionally real but statistically unproven at current sample size. The purpose of the 32-ticker expansion is to resolve that.
