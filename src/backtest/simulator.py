@@ -96,9 +96,11 @@ def run_backtest(ticker: str = TICKER, use_llm: bool = False) -> int:
 
         # ── Step 2: Context filter ────────────────────────────────────────
         ctx = get_price_context(ticker, dt_str[:10])
-        print(f"  Setup: {ctx.get('setup_quality')}  "
-              f"Pos: {ctx.get('price_position', '?'):.3f}  "
-              f"Pre-vol: {ctx.get('pre_vol_ratio', '?'):.2f}×")
+        pos    = ctx.get('price_position')
+        prevol = ctx.get('pre_vol_ratio')
+        pos_str = f"{pos:.3f}" if pos is not None else "—"
+        vol_str = f"{prevol:.2f}x" if prevol is not None else "—"
+        print(f"  Setup: {ctx.get('setup_quality')}  Pos: {pos_str}  Pre-vol: {vol_str}")
 
         if ctx.get("skip"):
             print(f"  SKIP: momentum exhaustion (ret60d={ctx.get('ret60d')}%)\n")
@@ -111,8 +113,8 @@ def run_backtest(ticker: str = TICKER, use_llm: bool = False) -> int:
         react = detect_reaction(ticker, dt_str)
         print(f"  Vol: {react['immediate_vol']:.0f} vs "
               f"{react['avg_vol_20d']:.0f} avg "
-              f"({react['strength']:.2f}×)  "
-              f"Price: {react['price_change_pct']:+.2f}%  "
+              f"({react['strength']:.2f}x)  "
+              f"Price(O->C): {react['price_change_pct']:+.2f}%  "
               f"Bars: {react['bars_found']}")
 
         if not react["triggered"]:
