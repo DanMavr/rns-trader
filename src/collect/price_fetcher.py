@@ -7,6 +7,12 @@ def fetch_and_store_prices(ticker=TICKER, yf_symbol=TICKER_YF,
                            interval="1d", period="2y"):
     """
     Fetch price bars from Yahoo Finance and store in price_bars table.
+
+    For 1d bars: datetime stored as YYYY-MM-DD (date only).
+    For intraday bars: datetime stored as YYYY-MM-DDTHH:MM:SS.
+
+    This ensures the UNIQUE(ticker, interval, datetime) constraint
+    correctly prevents duplicates regardless of yfinance timezone offsets.
     """
     print(f"  Fetching {interval} bars for {ticker} ({yf_symbol}) period={period}...")
     try:
@@ -32,7 +38,17 @@ def fetch_and_store_prices(ticker=TICKER, yf_symbol=TICKER_YF,
     inserted = 0
 
     for ts, row in df.iterrows():
-        dt_str = ts.strftime("%Y-%m-%dT%H:%M:%S")
+        # Normalise datetime format:
+        # 1d bars  → "YYYY-MM-DD"          (no time — avoids timezone dup bug)
+        # intraday → "YYYY-MM-DDTHH:MM:SS" (keep time for intraday precision)
+        if interval == "1d":
+            dt_str = str(ts)[:10]  # always "YYYY-MM-DD"
+        else:
+            try:
+                dt_str = ts.strftime("%Y-%m-%dT%H:%M:%S")
+            except Exception:
+                dt_str = str(ts)[:19]
+
         try:
             conn.execute("""
                 INSERT OR IGNORE INTO price_bars
