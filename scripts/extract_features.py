@@ -16,7 +16,16 @@ from datetime import datetime, timedelta
 DB_PATH  = Path("data/matd_backtest.db")
 OUT_PATH = Path("data/features.csv")
 
-SKIP_CATEGORIES = {"NOA", "RAG", "BOA", "BOD", "NRA", "AGR", "HOL", "DSH"}
+# Routine admin + third-party filings — no signal value
+# FER/FEO = Form 8.5 takeover position disclosures (third-party, not company news)
+SKIP_CATEGORIES = {
+    "NOA", "RAG", "BOA", "BOD", "NRA", "AGR", "HOL", "DSH",
+    "FER", "FEO",
+}
+
+# Tickers with known data quality issues — flagged in output but not excluded
+# TXP: subject to takeover bid, price dynamics may be artificial
+FLAGGED_TICKERS = {"TXP", "SEI"}
 
 
 def get_bars(conn, ticker):
@@ -161,6 +170,7 @@ def extract_features():
         rows.append({
             'rns_id': rns_id, 'ticker': ticker, 'rns_date': rxn_date,
             'category': cat, 'timing': timing,
+            'flagged': 1 if ticker in FLAGGED_TICKERS else 0,
             'vol_ratio': vol_ratio, 'oc_pct': oc_pct, 'gap_pct': gap_pct,
             'day_range_pct': day_range_pct, 'direction': direction,
             'avg_vol_20d': round(avg_vol_20d, 0), 'rxn_volume': rxn['volume'],
@@ -185,6 +195,7 @@ def extract_features():
 
     print(f"Events processed : {len(rows)}")
     print(f"Events skipped   : {skipped}")
+    print(f"Flagged tickers  : {FLAGGED_TICKERS}")
     print(f"Output           : {OUT_PATH}")
     print(f"Columns          : {len(rows[0]) if rows else 0}")
     return rows
@@ -193,6 +204,10 @@ def extract_features():
 if __name__ == "__main__":
     rows = extract_features()
     if rows:
-        print(f"\nSample row (first event):")
-        for k, v in list(rows[0].items()):
-            print(f"  {k:<20}: {v}")
+        # Summary by ticker
+        from collections import Counter
+        by_ticker = Counter(r['ticker'] for r in rows)
+        print(f"\nRows by ticker:")
+        for t, n in sorted(by_ticker.items()):
+            flag = " ⚠️" if t in FLAGGED_TICKERS else ""
+            print(f"  {t:<6}: {n}{flag}")
