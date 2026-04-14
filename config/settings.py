@@ -12,7 +12,8 @@ DB_PATH  = DATA_DIR / "matd_backtest.db"
 # ── Tickers ───────────────────────────────────────────────────────────────
 # All slugs verified from live LSE URLs: londonstockexchange.com/stock/TICKER/slug/
 # Verified: April 2026
-# SAVE removed: suspended from AIM April 2024, corrupted price series
+# Removed: SAVE (suspended from AIM Apr 2024, corrupted price series)
+#          CASP (Yahoo Finance split artefact — 99%/-99% gaps on zero volume)
 TICKERS = {
     # ── Original 11 ──────────────────────────────────────────────────────
     "MATD": {"yf": "MATD.L", "slug": "petro-matad-limited",            "name": "Petro Matad Limited"},
@@ -43,7 +44,6 @@ TICKERS = {
 
     # ── Tier 2 additions — £8m-£55m, smaller/less liquid ────────────────
     "ENW":  {"yf": "ENW.L",  "slug": "enwell-energy-plc",              "name": "Enwell Energy"},
-    "CASP": {"yf": "CASP.L", "slug": "caspian-sunrise-plc",            "name": "Caspian Sunrise"},
     "PXEN": {"yf": "PXEN.L", "slug": "prospex-energy-plc",             "name": "Prospex Energy"},
     "EOG":  {"yf": "EOG.L",  "slug": "europa-oil-gas-holdings-plc",    "name": "Europa Oil & Gas"},
     "ORCA": {"yf": "ORCA.L", "slug": "orcadian-energy-plc",            "name": "Orcadian Energy"},
@@ -73,9 +73,9 @@ MARKET_CLOSE = "16:30"
 TIMEZONE     = "Europe/London"
 
 # ── Signal thresholds (derived from data analysis Apr 2026) ─────────────
-VOL_MULTIPLIER   = 3.0   # daily volume must be Nx above 20d average
-PRICE_MOVE_PCT   = 2.0   # (close-open)/open must exceed this % on RNS day
-MIN_HISTORY_DAYS = 5     # minimum prior bars needed for avg_vol baseline
+VOL_MULTIPLIER   = 3.0
+PRICE_MOVE_PCT   = 2.0
+MIN_HISTORY_DAYS = 5
 
 # ── LLM — Grok (optional, only used with --llm flag) ────────────────────
 XAI_API_KEY  = os.getenv("XAI_API_KEY", "")
