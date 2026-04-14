@@ -1,5 +1,5 @@
 """
-Multi-ticker RNS + price collector.
+Multi-ticker RNS + daily price collector.
 
 Usage:
   python scripts/run_collect.py              # all tickers
@@ -31,9 +31,6 @@ def collect_ticker(ticker: str, cfg: dict):
 
     print(f"  Fetching daily price bars...")
     fetch_and_store_prices(ticker=ticker, yf_symbol=cfg["yf"], interval="1d", period="2y")
-
-    print(f"  Fetching 5-min intraday bars...")
-    fetch_and_store_prices(ticker=ticker, yf_symbol=cfg["yf"], interval="5m", period="60d")
 
     print(f"  Done: {ticker}")
 
