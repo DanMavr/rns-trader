@@ -90,6 +90,24 @@ def get_reaction_date(rns_dt_str: str, timing: str) -> str:
     return rns_dt_str[:10]
 
 
+def get_reaction_start(ticker: str, rns_dt_str: str) -> str | None:
+    """
+    Return the ISO datetime string for the market open of the reaction day.
+    Used by the simulator as entry_time for intraday price lookups.
+
+    Returns YYYY-MM-DDT08:00:00 (UK market open) on the reaction date,
+    or None if the timing cannot be determined.
+    """
+    try:
+        timing        = classify_timing(rns_dt_str)
+        if timing == "unknown":
+            return None
+        reaction_date = get_reaction_date(rns_dt_str, timing)
+        return reaction_date + "T08:00:00"
+    except Exception:
+        return None
+
+
 # ── Primary detector ──────────────────────────────────────────────────────
 
 def detect_reaction(
@@ -111,7 +129,8 @@ def detect_reaction(
 
     Keys returned:
       triggered, strength, direction, confidence,
-      price_change_pct, entry_price, avg_vol_20d, immediate_vol,
+      price_change_pct, entry_price, start_time,
+      avg_vol_20d, immediate_vol,
       timing, reaction_date, bars_found
     """
     timing        = classify_timing(rns_dt_str)
@@ -124,6 +143,7 @@ def detect_reaction(
         "confidence":        0.0,
         "price_change_pct":  0.0,
         "entry_price":       None,
+        "start_time":        None,
         "avg_vol_20d":       0.0,
         "immediate_vol":     0.0,
         "timing":            timing,
@@ -163,6 +183,7 @@ def detect_reaction(
     result["immediate_vol"]    = round(float(immediate_vol), 0)
     result["price_change_pct"] = round(price_change_pct, 3)
     result["entry_price"]      = entry_price
+    result["start_time"]       = reaction_date + "T08:00:00"
 
     # Need valid baseline to evaluate signal
     if avg_vol_20d == 0:
