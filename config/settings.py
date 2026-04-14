@@ -9,8 +9,10 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 DATA_DIR = BASE_DIR / "data"
 DB_PATH  = DATA_DIR / "matd_backtest.db"
 
-# ── Multi-ticker config ──────────────────────────────────────────────────
+# ── Tickers ───────────────────────────────────────────────────────────────
+# slugs verified from live LSE URLs: londonstockexchange.com/stock/TICKER/slug/
 TICKERS = {
+    # ── Existing 11 ──────────────────────────────────────────────────────
     "MATD": {"yf": "MATD.L", "slug": "petro-matad-limited",            "name": "Petro Matad Limited"},
     "88E":  {"yf": "88E.L",  "slug": "88-energy-limited",              "name": "88 Energy Ltd"},
     "CHAR": {"yf": "CHAR.L", "slug": "chariot-limited",                "name": "Chariot Limited"},
@@ -22,11 +24,28 @@ TICKERS = {
     "PANR": {"yf": "PANR.L", "slug": "pantheon-resources-plc",         "name": "Pantheon Resources plc"},
     "KIST": {"yf": "KIST.L", "slug": "kistos-holdings-plc",            "name": "Kistos Holdings plc"},
     "BLOE": {"yf": "BLOE.L", "slug": "block-energy-plc",               "name": "Block Energy plc"},
+
+    # ── Tier 1 additions — slugs verified from live LSE URLs Apr 2026 ───
+    "ECO":  {"yf": "ECO.L",  "slug": "eco-atlantic-oil-gas-ltd",       "name": "Eco Atlantic Oil & Gas"},
+    "FOG":  {"yf": "FOG.L",  "slug": "falcon-oil-gas-ltd",             "name": "Falcon Oil & Gas"},
+    "SEI":  {"yf": "SEI.L",  "slug": "sintana-energy-inc",             "name": "Sintana Energy"},
+    "SAVE": {"yf": "SAVE.L", "slug": "savannah-energy-plc",            "name": "Savannah Energy"},
+    "JSE":  {"yf": "JSE.L",  "slug": "jadestone-energy-plc",           "name": "Jadestone Energy"},
+    "ZPHR": {"yf": "ZPHR.L", "slug": "zephyr-energy-plc",              "name": "Zephyr Energy"},
+    "SEA":  {"yf": "SEA.L",  "slug": "seascape-energy-asia-plc",       "name": "Seascape Energy Asia"},
+    "JOG":  {"yf": "JOG.L",  "slug": "jersey-oil-and-gas-plc",         "name": "Jersey Oil and Gas"},
+    "TXP":  {"yf": "TXP.L",  "slug": "touchstone-exploration-inc",     "name": "Touchstone Exploration"},
+    "PMG":  {"yf": "PMG.L",  "slug": "parkmead-group-the-plc",         "name": "Parkmead Group"},
+    "STAR": {"yf": "STAR.L", "slug": "star-energy-group-plc",          "name": "Star Energy Group"},
+    "RKH":  {"yf": "RKH.L",  "slug": "rockhopper-exploration-plc",     "name": "Rockhopper Exploration"},
+
+    # ── AET (Afentra) — slug NOT yet verified, add after manual check ───
+    # "AET": {"yf": "AET.L", "slug": "???",                            "name": "Afentra"},
 }
 
 DEFAULT_TICKER = "MATD"
 
-# Backward compatibility — single ticker mode still works
+# Backward compatibility
 TICKER      = DEFAULT_TICKER
 TICKER_YF   = TICKERS[DEFAULT_TICKER]["yf"]
 ISSUER_NAME = TICKERS[DEFAULT_TICKER]["slug"]
@@ -44,7 +63,7 @@ MARKET_OPEN  = "08:00"
 MARKET_CLOSE = "16:30"
 TIMEZONE     = "Europe/London"
 
-# ── Backtest thresholds ──────────────────────────────────────────────────
+# ── Signal thresholds (derived from data analysis Apr 2026) ─────────────
 VOL_MULTIPLIER   = 3.0   # daily volume must be Nx above 20d average
 PRICE_MOVE_PCT   = 2.0   # (close-open)/open must exceed this % on RNS day
 MIN_HISTORY_DAYS = 5     # minimum prior bars needed for avg_vol baseline
