@@ -11,24 +11,9 @@ from src.collect.database import get_connection
 from src.react.category_filter  import should_skip, get_priority
 from src.react.context_filter   import get_price_context
 from src.react.reaction_detector import (
-    detect_reaction, classify_timing, get_reaction_start
+    detect_reaction, classify_timing, get_reaction_date
 )
 
-
-def get_price_n_minutes_after(ticker, dt_str, minutes):
-    try:
-        dt     = datetime.fromisoformat(dt_str.replace("Z", ""))
-        target = (dt + timedelta(minutes=minutes)).strftime("%Y-%m-%dT%H:%M:%S")
-    except Exception:
-        return None
-    conn = get_connection()
-    row = conn.execute("""
-        SELECT * FROM price_bars
-        WHERE ticker=? AND interval='5m' AND datetime >= ?
-        ORDER BY datetime ASC LIMIT 1
-    """, (ticker, target)).fetchone()
-    conn.close()
-    return dict(row) if row else None
 
 
 def get_eod_price(ticker, date_str):
@@ -117,36 +102,24 @@ def run_backtest(ticker=TICKER, use_llm=False):
         # Reaction confirmed — enter trade
         direction   = "BUY" if react["direction"] == 1 else "SELL"
         entry_price = react["entry_price"]
-        entry_time  = react["start_time"]
+        entry_time  = react["reaction_date"]
 
         print(f"  ✅ TRIGGERED {react['strength']:.1f}× | "
               f"{react['price_change_pct']:+.2f}% | "
               f"Conf: {react['confidence']:.2f} → {direction}")
 
-        # Exit prices
-        prices = {}
-        for mins in [5, 15, 30, 60]:
-            bar = get_price_n_minutes_after(ticker, entry_time, mins)
-            prices[f"t{mins}"] = bar["close"] if bar else None
-
-        eod_bar   = get_eod_price(ticker, dt_str[:10])
-        price_eod = eod_bar["close"] if eod_bar else None
-
-        returns = {}
-        for mins in [5, 15, 30, 60]:
-            returns[f"t{mins}"] = calc_return(
-                entry_price, prices[f"t{mins}"], direction)
+        # Exit price — EOD only (daily bars)
+        prices     = {}
+        eod_bar    = get_eod_price(ticker, entry_time)
+        price_eod  = eod_bar["close"] if eod_bar else None
+        returns    = {}
         return_eod = calc_return(entry_price, price_eod, direction)
 
-        outcome_t15 = ("WIN" if (returns["t15"] or 0) > 0 else "LOSS") \
-                      if returns["t15"] is not None else None
         outcome_eod = ("WIN" if (return_eod or 0) > 0 else "LOSS") \
                       if return_eod is not None else None
 
-        t15_str = f"{returns['t15']:+.2f}%" if returns['t15'] is not None else "—"
         eod_str = f"{return_eod:+.2f}%" if return_eod is not None else "—"
-        print(f"  Entry={entry_price:.2f}p  T+15={t15_str}  EOD={eod_str}")
-        print(f"  {outcome_t15 or '?'} (T15)  {outcome_eod or '?'} (EOD)\n")
+        print(f"  Entry={entry_price:.4f}p  EOD={eod_str}  {outcome_eod or '?'}\n")
 
         # Optional LLM
         llm_score = llm_conf = llm_reason = model_used = None
@@ -179,7 +152,7 @@ def run_backtest(ticker=TICKER, use_llm=False):
             entry_price=entry_price, entry_time=entry_time,
             prices=prices, price_eod=price_eod,
             returns=returns, return_eod=return_eod,
-            outcome_t15=outcome_t15, outcome_eod=outcome_eod,
+            outcome_t15=None, outcome_eod=outcome_eod,
             llm_score=llm_score, llm_confidence=llm_conf,
             llm_reason=llm_reason, model_used=model_used,
         )

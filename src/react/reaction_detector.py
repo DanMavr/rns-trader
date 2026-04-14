@@ -1,6 +1,9 @@
 """
-Reaction detector — the core signal.
-Watches first 15 min of price/volume after an RNS.
+Reaction detector — daily bar signal.
+Detects significant market reaction to an RNS using daily price/volume.
+- Volume : day-of-RNS total volume vs 20-day average daily volume
+- Price  : (close - open) / open on the reaction day
+- Timing : pre_market/intraday → same day; post_market → next trading day
 No text. No LLM. Pure market-validated signal.
 """
 from datetime import datetime, timedelta
@@ -9,30 +12,27 @@ from src.collect.database import get_connection
 
 def get_20d_avg_volume(ticker: str, rns_date: str) -> float:
     """
-    Average volume of the first 3 x 5-min bars at open (08:00-08:15)
-    across the 20 trading days before rns_date.
-    This makes it directly comparable to immediate_vol.
+    Average daily volume over the 20 trading days before rns_date.
+    Uses 1d bars only.
+    Returns 0.0 if fewer than 5 days of history available.
     """
     conn = get_connection()
     rows = conn.execute("""
-        SELECT AVG(volume) FROM (
-            SELECT SUM(volume) as volume
-            FROM price_bars
-            WHERE ticker = ?
-              AND interval = '5m'
-              AND datetime < ?
-              AND SUBSTR(datetime, 12, 5) BETWEEN '08:00' AND '08:14'
-            GROUP BY SUBSTR(datetime, 1, 10)
-            ORDER BY SUBSTR(datetime, 1, 10) DESC
-            LIMIT 20
-        )
-    """, (ticker, rns_date + ' 00:00:00')).fetchone()
+        SELECT volume FROM price_bars
+        WHERE ticker = ?
+          AND interval = '1d'
+          AND SUBSTR(datetime, 1, 10) < ?
+        ORDER BY datetime DESC
+        LIMIT 20
+    """, (ticker, rns_date)).fetchall()
     conn.close()
-    return float(rows[0]) if rows and rows[0] else 0.0
+    if not rows or len(rows) < 5:
+        return 0.0
+    return float(sum(r[0] for r in rows) / len(rows))
 
 
 def classify_timing(dt_str: str) -> str:
-    """Classify RNS as pre_market / intraday / post_market."""
+    """Classify RNS as pre_market / intraday / post_market / unknown."""
     try:
         dt   = datetime.fromisoformat(dt_str.replace("Z", ""))
         mins = dt.hour * 60 + dt.minute
@@ -46,88 +46,110 @@ def classify_timing(dt_str: str) -> str:
         return "unknown"
 
 
-def get_reaction_start(rns_dt_str: str, timing: str) -> str:
-    """Return datetime string at which to start watching for reaction."""
-    if timing == "intraday":
-        return rns_dt_str
-    if timing == "pre_market":
-        return rns_dt_str[:10] + "T08:00:00"
+def get_reaction_date(rns_dt_str: str, timing: str) -> str:
+    """
+    Return the date (YYYY-MM-DD) on which the market reaction is expected.
+    pre_market / intraday -> same calendar date as RNS.
+    post_market           -> next calendar date (market opens next day).
+    """
     if timing == "post_market":
         try:
             dt = datetime.fromisoformat(rns_dt_str.replace("Z", ""))
-            return (dt + timedelta(days=1)).strftime("%Y-%m-%d") + "T08:00:00"
+            return (dt + timedelta(days=1)).strftime("%Y-%m-%d")
         except Exception:
-            return rns_dt_str[:10] + "T08:00:00"
-    return rns_dt_str
+            pass
+    return rns_dt_str[:10]
 
 
 def detect_reaction(
     ticker:         str,
     rns_dt_str:     str,
-    vol_multiplier: float = 4.0,
+    vol_multiplier: float = 3.0,
     price_move_pct: float = 3.5,
-    n_bars:         int   = 3,
 ) -> dict:
     """
-    Core reaction detector.
-    Returns dict with: triggered, strength, direction, confidence,
-    price_change_pct, entry_price, avg_vol_20d, immediate_vol,
-    timing, start_time, bars_found.
+    Daily bar reaction detector.
+
+    Looks up the 1d bar for the reaction date and compares:
+      - immediate_vol : full day volume on reaction date
+      - avg_vol_20d   : average daily volume over prior 20 trading days
+      - price_change_pct : (close - open) / open * 100 on reaction date
+
+    Triggers when BOTH:
+      - immediate_vol > avg_vol_20d * vol_multiplier  (default 3x)
+      - abs(price_change_pct) > price_move_pct        (default 3.5%)
+
+    Returns dict with:
+      triggered, strength, direction, confidence,
+      price_change_pct, entry_price, avg_vol_20d, immediate_vol,
+      timing, reaction_date, bars_found.
     """
-    timing     = classify_timing(rns_dt_str)
-    start_time = get_reaction_start(rns_dt_str, timing)
+    timing        = classify_timing(rns_dt_str)
+    reaction_date = get_reaction_date(rns_dt_str, timing)
 
     result = {
-        "triggered": False, "strength": 0.0, "direction": 0,
-        "confidence": 0.0, "price_change_pct": 0.0,
-        "entry_price": None, "avg_vol_20d": 0.0,
-        "immediate_vol": 0.0, "timing": timing,
-        "start_time": start_time, "bars_found": 0,
+        "triggered":         False,
+        "strength":          0.0,
+        "direction":         0,
+        "confidence":        0.0,
+        "price_change_pct":  0.0,
+        "entry_price":       None,
+        "avg_vol_20d":       0.0,
+        "immediate_vol":     0.0,
+        "timing":            timing,
+        "reaction_date":     reaction_date,
+        "bars_found":        0,
     }
 
     if timing == "unknown":
         return result
 
+    # Fetch the daily bar for the reaction date
     conn = get_connection()
-    bars = conn.execute("""
+    bar = conn.execute("""
         SELECT datetime, open, high, low, close, volume
         FROM price_bars
-        WHERE ticker = ? AND interval = '5m' AND datetime >= ?
-        ORDER BY datetime ASC LIMIT ?
-    """, (ticker, start_time.replace('T', ' '), n_bars)).fetchall()
+        WHERE ticker   = ?
+          AND interval = '1d'
+          AND SUBSTR(datetime, 1, 10) = ?
+        LIMIT 1
+    """, (ticker, reaction_date)).fetchone()
     conn.close()
 
-    result["bars_found"] = len(bars)
-    if len(bars) < 2:
+    if not bar:
+        # Weekend / bank holiday — no bar exists, signal cannot fire
         return result
 
-    watch = [dict(b) for b in bars]
+    result["bars_found"] = 1
+    bar = dict(bar)
 
-    avg_vol_20d   = get_20d_avg_volume(ticker, rns_dt_str[:10])
-    immediate_vol = sum(b["volume"] for b in watch) / len(watch)
-    entry_price   = watch[0]["open"]
-    final_close   = watch[-1]["close"]
-    price_change_pct = (final_close - entry_price) / entry_price * 100 \
+    avg_vol_20d      = get_20d_avg_volume(ticker, reaction_date)
+    immediate_vol    = bar["volume"]
+    entry_price      = bar["open"]
+    price_change_pct = (bar["close"] - entry_price) / entry_price * 100 \
                        if entry_price else 0.0
 
-    result["avg_vol_20d"]    = round(avg_vol_20d, 0)
-    result["immediate_vol"]  = round(immediate_vol, 0)
+    result["avg_vol_20d"]      = round(avg_vol_20d, 0)
+    result["immediate_vol"]    = round(float(immediate_vol), 0)
     result["price_change_pct"] = round(price_change_pct, 3)
-    result["entry_price"]    = entry_price
+    result["entry_price"]      = entry_price
 
-    vol_ok   = avg_vol_20d > 0 and immediate_vol > avg_vol_20d * vol_multiplier
+    if avg_vol_20d == 0:
+        return result
+
+    vol_ok   = immediate_vol > avg_vol_20d * vol_multiplier
     price_ok = abs(price_change_pct) > price_move_pct
 
     if not (vol_ok and price_ok):
         return result
 
-    strength  = immediate_vol / avg_vol_20d if avg_vol_20d > 0 else 0.0
+    strength  = immediate_vol / avg_vol_20d
     direction = 1 if price_change_pct > 0 else -1
 
     result.update({
         "triggered":  True,
         "strength":   round(strength, 2),
         "direction":  direction,
-        "confidence": round(min(1.0, strength / 8.0), 3),
+        "confidence": round(min(1.0, strength / 6.0), 3),
     })
     return result
