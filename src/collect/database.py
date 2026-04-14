@@ -43,7 +43,7 @@ def init_db():
 
         CREATE TABLE IF NOT EXISTS backtest_results (
             id                  INTEGER PRIMARY KEY AUTOINCREMENT,
-            rns_id              INTEGER NOT NULL,
+            rns_id              INTEGER NOT NULL UNIQUE,
             ticker              TEXT    NOT NULL,
             timing              TEXT,
             category            TEXT,
