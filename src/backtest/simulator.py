@@ -22,23 +22,27 @@ def get_price_n_minutes_after(ticker, dt_str, minutes):
     except Exception:
         return None
     conn = get_connection()
-    row = conn.execute("""
-        SELECT * FROM price_bars
-        WHERE ticker=? AND interval='5m' AND datetime >= ?
-        ORDER BY datetime ASC LIMIT 1
-    """, (ticker, target)).fetchone()
-    conn.close()
+    try:
+        row = conn.execute("""
+            SELECT * FROM price_bars
+            WHERE ticker=? AND interval='5m' AND datetime >= ?
+            ORDER BY datetime ASC LIMIT 1
+        """, (ticker, target)).fetchone()
+    finally:
+        conn.close()
     return dict(row) if row else None
 
 
 def get_eod_price(ticker, date_str):
     conn = get_connection()
-    row = conn.execute("""
-        SELECT * FROM price_bars
-        WHERE ticker=? AND interval='1d' AND datetime >= ?
-        ORDER BY datetime ASC LIMIT 1
-    """, (ticker, date_str)).fetchone()
-    conn.close()
+    try:
+        row = conn.execute("""
+            SELECT * FROM price_bars
+            WHERE ticker=? AND interval='1d' AND datetime >= ?
+            ORDER BY datetime ASC LIMIT 1
+        """, (ticker, date_str)).fetchone()
+    finally:
+        conn.close()
     return dict(row) if row else None
 
 
@@ -51,12 +55,14 @@ def calc_return(entry, exit_price, direction="BUY"):
 
 def run_backtest(ticker=TICKER, use_llm=False):
     conn = get_connection()
-    events = conn.execute("""
-        SELECT * FROM rns_events
-        WHERE ticker=? AND fetch_status='ok'
-        ORDER BY datetime ASC
-    """, (ticker,)).fetchall()
-    conn.close()
+    try:
+        events = conn.execute("""
+            SELECT * FROM rns_events
+            WHERE ticker=? AND fetch_status='ok'
+            ORDER BY datetime ASC
+        """, (ticker,)).fetchall()
+    finally:
+        conn.close()
     events = [dict(e) for e in events]
 
     total = len(events)
@@ -205,61 +211,63 @@ def _save_result(rns_id, ticker, timing, category,
     ctx = ctx or {}; react = react or {}
     prices = prices or {}; returns = returns or {}
     conn = get_connection()
-    conn.execute("""
-        INSERT INTO backtest_results (
-            rns_id, ticker, timing, category, category_priority,
-            skipped_category, price_position, above_sma20,
-            ret5d, ret60d, pre_vol_ratio, setup_quality, skipped_context,
-            reaction_triggered, reaction_strength, reaction_direction,
-            reaction_confidence, reaction_price_chg,
-            avg_vol_20d, immediate_vol, bars_found,
-            would_trade, direction, entry_price, entry_time,
-            price_t5, price_t15, price_t30, price_t60, price_eod,
-            return_t5, return_t15, return_t30, return_t60, return_eod,
-            outcome_t15, outcome_eod,
-            model_used, llm_score, llm_confidence, llm_reason
-        ) VALUES (
-            :rns_id, :ticker, :timing, :category, :category_priority,
-            :skipped_category, :price_position, :above_sma20,
-            :ret5d, :ret60d, :pre_vol_ratio, :setup_quality, :skipped_context,
-            :reaction_triggered, :reaction_strength, :reaction_direction,
-            :reaction_confidence, :reaction_price_chg,
-            :avg_vol_20d, :immediate_vol, :bars_found,
-            :would_trade, :direction, :entry_price, :entry_time,
-            :price_t5, :price_t15, :price_t30, :price_t60, :price_eod,
-            :return_t5, :return_t15, :return_t30, :return_t60, :return_eod,
-            :outcome_t15, :outcome_eod,
-            :model_used, :llm_score, :llm_confidence, :llm_reason
-        )
-    """, dict(
-        rns_id=rns_id, ticker=ticker, timing=timing,
-        category=category, category_priority=get_priority(category),
-        skipped_category=skipped_category,
-        price_position=ctx.get("price_position"),
-        above_sma20=1 if ctx.get("above_sma20") else 0,
-        ret5d=ctx.get("ret5d"), ret60d=ctx.get("ret60d"),
-        pre_vol_ratio=ctx.get("pre_vol_ratio"),
-        setup_quality=ctx.get("setup_quality"),
-        skipped_context=skipped_context,
-        reaction_triggered=1 if react.get("triggered") else 0,
-        reaction_strength=react.get("strength"),
-        reaction_direction=react.get("direction"),
-        reaction_confidence=react.get("confidence"),
-        reaction_price_chg=react.get("price_change_pct"),
-        avg_vol_20d=react.get("avg_vol_20d"),
-        immediate_vol=react.get("immediate_vol"),
-        bars_found=react.get("bars_found"),
-        would_trade=would_trade, direction=direction,
-        entry_price=entry_price, entry_time=entry_time,
-        price_t5=prices.get("t5"), price_t15=prices.get("t15"),
-        price_t30=prices.get("t30"), price_t60=prices.get("t60"),
-        price_eod=price_eod,
-        return_t5=returns.get("t5"), return_t15=returns.get("t15"),
-        return_t30=returns.get("t30"), return_t60=returns.get("t60"),
-        return_eod=return_eod,
-        outcome_t15=outcome_t15, outcome_eod=outcome_eod,
-        model_used=model_used, llm_score=llm_score,
-        llm_confidence=llm_confidence, llm_reason=llm_reason,
-    ))
-    conn.commit()
-    conn.close()
+    try:
+        conn.execute("""
+            INSERT OR REPLACE INTO backtest_results (
+                rns_id, ticker, timing, category, category_priority,
+                skipped_category, price_position, above_sma20,
+                ret5d, ret60d, pre_vol_ratio, setup_quality, skipped_context,
+                reaction_triggered, reaction_strength, reaction_direction,
+                reaction_confidence, reaction_price_chg,
+                avg_vol_20d, immediate_vol, bars_found,
+                would_trade, direction, entry_price, entry_time,
+                price_t5, price_t15, price_t30, price_t60, price_eod,
+                return_t5, return_t15, return_t30, return_t60, return_eod,
+                outcome_t15, outcome_eod,
+                model_used, llm_score, llm_confidence, llm_reason
+            ) VALUES (
+                :rns_id, :ticker, :timing, :category, :category_priority,
+                :skipped_category, :price_position, :above_sma20,
+                :ret5d, :ret60d, :pre_vol_ratio, :setup_quality, :skipped_context,
+                :reaction_triggered, :reaction_strength, :reaction_direction,
+                :reaction_confidence, :reaction_price_chg,
+                :avg_vol_20d, :immediate_vol, :bars_found,
+                :would_trade, :direction, :entry_price, :entry_time,
+                :price_t5, :price_t15, :price_t30, :price_t60, :price_eod,
+                :return_t5, :return_t15, :return_t30, :return_t60, :return_eod,
+                :outcome_t15, :outcome_eod,
+                :model_used, :llm_score, :llm_confidence, :llm_reason
+            )
+        """, dict(
+            rns_id=rns_id, ticker=ticker, timing=timing,
+            category=category, category_priority=get_priority(category),
+            skipped_category=skipped_category,
+            price_position=ctx.get("price_position"),
+            above_sma20=1 if ctx.get("above_sma20") else 0,
+            ret5d=ctx.get("ret5d"), ret60d=ctx.get("ret60d"),
+            pre_vol_ratio=ctx.get("pre_vol_ratio"),
+            setup_quality=ctx.get("setup_quality"),
+            skipped_context=skipped_context,
+            reaction_triggered=1 if react.get("triggered") else 0,
+            reaction_strength=react.get("strength"),
+            reaction_direction=react.get("direction"),
+            reaction_confidence=react.get("confidence"),
+            reaction_price_chg=react.get("price_change_pct"),
+            avg_vol_20d=react.get("avg_vol_20d"),
+            immediate_vol=react.get("immediate_vol"),
+            bars_found=react.get("bars_found"),
+            would_trade=would_trade, direction=direction,
+            entry_price=entry_price, entry_time=entry_time,
+            price_t5=prices.get("t5"), price_t15=prices.get("t15"),
+            price_t30=prices.get("t30"), price_t60=prices.get("t60"),
+            price_eod=price_eod,
+            return_t5=returns.get("t5"), return_t15=returns.get("t15"),
+            return_t30=returns.get("t30"), return_t60=returns.get("t60"),
+            return_eod=return_eod,
+            outcome_t15=outcome_t15, outcome_eod=outcome_eod,
+            model_used=model_used, llm_score=llm_score,
+            llm_confidence=llm_confidence, llm_reason=llm_reason,
+        ))
+        conn.commit()
+    finally:
+        conn.close()
