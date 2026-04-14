@@ -93,9 +93,9 @@ def get_summary(ticker=DEFAULT_TICKER):
                 SUM(b.skipped_context)                                   as ctx_skipped,
                 SUM(CASE WHEN b.reaction_triggered=1 THEN 1 ELSE 0 END) as reactions,
                 SUM(b.would_trade)                                       as trades,
-                SUM(CASE WHEN b.outcome_eod='WIN'  THEN 1 ELSE 0 END)   as wins,
-                SUM(CASE WHEN b.outcome_eod='LOSS' THEN 1 ELSE 0 END)   as losses,
-                ROUND(AVG(CASE WHEN b.would_trade=1 THEN b.return_eod END),2) as avg_return,
+                SUM(CASE WHEN b.outcome_t5d='WIN'  THEN 1 ELSE 0 END)   as wins,
+                SUM(CASE WHEN b.outcome_t5d='LOSS' THEN 1 ELSE 0 END)   as losses,
+                ROUND(AVG(CASE WHEN b.would_trade=1 THEN b.return_t5d END),2) as avg_return,
                 ROUND(AVG(CASE WHEN b.would_trade=1 THEN b.reaction_strength END),2) as avg_strength
             FROM backtest_results b
             JOIN rns_events e ON b.rns_id=e.id
@@ -106,8 +106,8 @@ def get_summary(ticker=DEFAULT_TICKER):
         SELECT e.ticker,
                COUNT(DISTINCT e.id)                                          as rns_count,
                SUM(b.would_trade)                                            as trades,
-               SUM(CASE WHEN b.outcome_eod='WIN' THEN 1 ELSE 0 END)         as wins,
-               ROUND(AVG(CASE WHEN b.would_trade=1 THEN b.return_eod END),2) as avg_return
+               SUM(CASE WHEN b.outcome_t5d='WIN' THEN 1 ELSE 0 END)         as wins,
+               ROUND(AVG(CASE WHEN b.would_trade=1 THEN b.return_t5d END),2) as avg_return
         FROM rns_events e
         LEFT JOIN backtest_results b ON b.rns_id=e.id
         GROUP BY e.ticker
@@ -231,7 +231,7 @@ def chart_data():
                    b.reaction_direction, b.reaction_confidence,
                    b.reaction_price_chg, b.timing,
                    b.setup_quality, b.would_trade,
-                   b.outcome_eod, b.return_eod
+                   b.outcome_t5d, b.return_t5d
             FROM rns_events e
             LEFT JOIN price_bars p
                 ON p.ticker=? AND p.interval='1d'
@@ -287,11 +287,11 @@ def backtest_data():
                     ELSE '10x+'
                 END as bucket,
                 COUNT(*) as total,
-                SUM(CASE WHEN b.outcome_eod='WIN' THEN 1 ELSE 0 END) as wins,
-                ROUND(AVG(b.return_eod),2) as avg_return
+                SUM(CASE WHEN b.outcome_t5d='WIN' THEN 1 ELSE 0 END) as wins,
+                ROUND(AVG(b.return_t5d),2) as avg_return
             FROM backtest_results b
             JOIN rns_events e ON b.rns_id=e.id
-            WHERE e.ticker=? AND b.would_trade=1 AND b.return_eod IS NOT NULL
+            WHERE e.ticker=? AND b.would_trade=1 AND b.return_t5d IS NOT NULL
             GROUP BY bucket ORDER BY MIN(b.reaction_strength)
         """, (ticker,)).fetchall()
 
@@ -299,8 +299,8 @@ def backtest_data():
             SELECT b.timing,
                    COUNT(*) as total,
                    SUM(b.would_trade) as trades,
-                   SUM(CASE WHEN b.outcome_eod='WIN' THEN 1 ELSE 0 END) as wins,
-                   ROUND(AVG(CASE WHEN b.would_trade=1 THEN b.return_eod END),2) as avg_return
+                   SUM(CASE WHEN b.outcome_t5d='WIN' THEN 1 ELSE 0 END) as wins,
+                   ROUND(AVG(CASE WHEN b.would_trade=1 THEN b.return_t5d END),2) as avg_return
             FROM backtest_results b
             JOIN rns_events e ON b.rns_id=e.id
             WHERE e.ticker=?
@@ -312,8 +312,8 @@ def backtest_data():
                    COUNT(*) as total,
                    SUM(b.skipped_category) as skipped,
                    SUM(b.would_trade) as trades,
-                   SUM(CASE WHEN b.outcome_eod='WIN' THEN 1 ELSE 0 END) as wins,
-                   ROUND(AVG(CASE WHEN b.would_trade=1 THEN b.return_eod END),2) as avg_return,
+                   SUM(CASE WHEN b.outcome_t5d='WIN' THEN 1 ELSE 0 END) as wins,
+                   ROUND(AVG(CASE WHEN b.would_trade=1 THEN b.return_t5d END),2) as avg_return,
                    ROUND(AVG(b.reaction_strength),2) as avg_strength
             FROM backtest_results b
             JOIN rns_events e ON b.rns_id=e.id
@@ -325,8 +325,8 @@ def backtest_data():
             SELECT b.setup_quality,
                    COUNT(*) as total,
                    SUM(b.would_trade) as trades,
-                   SUM(CASE WHEN b.outcome_eod='WIN' THEN 1 ELSE 0 END) as wins,
-                   ROUND(AVG(CASE WHEN b.would_trade=1 THEN b.return_eod END),2) as avg_return
+                   SUM(CASE WHEN b.outcome_t5d='WIN' THEN 1 ELSE 0 END) as wins,
+                   ROUND(AVG(CASE WHEN b.would_trade=1 THEN b.return_t5d END),2) as avg_return
             FROM backtest_results b
             JOIN rns_events e ON b.rns_id=e.id
             WHERE e.ticker=? AND b.setup_quality IS NOT NULL
@@ -334,8 +334,8 @@ def backtest_data():
         """, (ticker,)).fetchall()
 
         trades = conn.execute("""
-            SELECT e.datetime, b.direction, b.return_eod, b.return_t15,
-                   b.outcome_eod, b.reaction_strength, b.reaction_price_chg,
+            SELECT e.datetime, b.direction, b.return_t5d, b.return_t1d,
+                   b.outcome_t5d, b.reaction_strength, b.reaction_price_chg,
                    e.title, e.category, b.entry_price
             FROM backtest_results b
             JOIN rns_events e ON b.rns_id = e.id
@@ -346,7 +346,7 @@ def backtest_data():
         cum_pnl = []
         running = 0.0
         for t in trades:
-            ret = t["return_eod"] or 0
+            ret = t["return_t5d"] or 0
             running += ret
             cum_pnl.append({
                 "date":       t["datetime"][:10],
@@ -355,7 +355,7 @@ def backtest_data():
                 "direction":  t["direction"],
                 "return":     round(ret, 2),
                 "cumulative": round(running, 2),
-                "outcome":    t["outcome_eod"],
+                "outcome":    t["outcome_t5d"],
                 "strength":   t["reaction_strength"],
                 "price_chg":  t["reaction_price_chg"],
                 "entry":      t["entry_price"],
