@@ -206,7 +206,7 @@ def _save_result(rns_id, ticker, timing, category,
     prices = prices or {}; returns = returns or {}
     conn = get_connection()
     conn.execute("""
-        INSERT INTO backtest_results (
+        INSERT OR REPLACE INTO backtest_results (
             rns_id, ticker, timing, category, category_priority,
             skipped_category, price_position, above_sma20,
             ret5d, ret60d, pre_vol_ratio, setup_quality, skipped_context,
