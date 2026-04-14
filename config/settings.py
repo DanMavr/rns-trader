@@ -46,7 +46,7 @@ TIMEZONE     = "Europe/London"
 
 # ── Backtest thresholds ──────────────────────────────────────────────────
 VOL_MULTIPLIER   = 3.0   # daily volume must be Nx above 20d average
-PRICE_MOVE_PCT   = 3.5   # price must move at least this % on RNS day
+PRICE_MOVE_PCT   = 2.0   # (close-open)/open must exceed this % on RNS day
 MIN_HISTORY_DAYS = 5     # minimum prior bars needed for avg_vol baseline
 
 # ── LLM — Grok (optional, only used with --llm flag) ────────────────────
