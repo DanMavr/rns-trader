@@ -8,20 +8,27 @@ from src.collect.database import get_connection
 
 
 def get_20d_avg_volume(ticker: str, rns_date: str) -> float:
-    """Correct subquery implementation — LIMIT applies before AVG."""
+    """
+    Average volume of the first 3 x 5-min bars at open (08:00-08:15)
+    across the 20 trading days before rns_date.
+    This makes it directly comparable to immediate_vol.
+    """
     conn = get_connection()
-    row = conn.execute("""
+    rows = conn.execute("""
         SELECT AVG(volume) FROM (
-            SELECT volume FROM price_bars
+            SELECT SUM(volume) as volume
+            FROM price_bars
             WHERE ticker = ?
-              AND interval = '1d'
+              AND interval = '5m'
               AND datetime < ?
-            ORDER BY datetime DESC
+              AND SUBSTR(datetime, 12, 5) BETWEEN '08:00' AND '08:14'
+            GROUP BY SUBSTR(datetime, 1, 10)
+            ORDER BY SUBSTR(datetime, 1, 10) DESC
             LIMIT 20
         )
-    """, (ticker, rns_date + "T00:00:00")).fetchone()
+    """, (ticker, rns_date + ' 00:00:00')).fetchone()
     conn.close()
-    return float(row[0]) if row and row[0] else 0.0
+    return float(rows[0]) if rows and rows[0] else 0.0
 
 
 def classify_timing(dt_str: str) -> str:
@@ -87,7 +94,7 @@ def detect_reaction(
         FROM price_bars
         WHERE ticker = ? AND interval = '5m' AND datetime >= ?
         ORDER BY datetime ASC LIMIT ?
-    """, (ticker, start_time, n_bars)).fetchall()
+    """, (ticker, start_time.replace('T', ' '), n_bars)).fetchall()
     conn.close()
 
     result["bars_found"] = len(bars)
