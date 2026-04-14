@@ -10,9 +10,11 @@ DATA_DIR = BASE_DIR / "data"
 DB_PATH  = DATA_DIR / "matd_backtest.db"
 
 # ── Tickers ───────────────────────────────────────────────────────────────
-# slugs verified from live LSE URLs: londonstockexchange.com/stock/TICKER/slug/
+# All slugs verified from live LSE URLs: londonstockexchange.com/stock/TICKER/slug/
+# Verified: April 2026
+# SAVE removed: suspended from AIM April 2024, corrupted price series
 TICKERS = {
-    # ── Existing 11 ──────────────────────────────────────────────────────
+    # ── Original 11 ──────────────────────────────────────────────────────
     "MATD": {"yf": "MATD.L", "slug": "petro-matad-limited",            "name": "Petro Matad Limited"},
     "88E":  {"yf": "88E.L",  "slug": "88-energy-limited",              "name": "88 Energy Ltd"},
     "CHAR": {"yf": "CHAR.L", "slug": "chariot-limited",                "name": "Chariot Limited"},
@@ -25,11 +27,12 @@ TICKERS = {
     "KIST": {"yf": "KIST.L", "slug": "kistos-holdings-plc",            "name": "Kistos Holdings plc"},
     "BLOE": {"yf": "BLOE.L", "slug": "block-energy-plc",               "name": "Block Energy plc"},
 
-    # ── Tier 1 additions — slugs verified from live LSE URLs Apr 2026 ───
+    # ── Tier 1 additions — £20m-£750m, actively trading ─────────────────
+    "RKH":  {"yf": "RKH.L",  "slug": "rockhopper-exploration-plc",     "name": "Rockhopper Exploration"},
     "ECO":  {"yf": "ECO.L",  "slug": "eco-atlantic-oil-gas-ltd",       "name": "Eco Atlantic Oil & Gas"},
+    "AET":  {"yf": "AET.L",  "slug": "afentra-plc",                    "name": "Afentra"},
     "FOG":  {"yf": "FOG.L",  "slug": "falcon-oil-gas-ltd",             "name": "Falcon Oil & Gas"},
     "SEI":  {"yf": "SEI.L",  "slug": "sintana-energy-inc",             "name": "Sintana Energy"},
-    "SAVE": {"yf": "SAVE.L", "slug": "savannah-energy-plc",            "name": "Savannah Energy"},
     "JSE":  {"yf": "JSE.L",  "slug": "jadestone-energy-plc",           "name": "Jadestone Energy"},
     "ZPHR": {"yf": "ZPHR.L", "slug": "zephyr-energy-plc",              "name": "Zephyr Energy"},
     "SEA":  {"yf": "SEA.L",  "slug": "seascape-energy-asia-plc",       "name": "Seascape Energy Asia"},
@@ -37,10 +40,16 @@ TICKERS = {
     "TXP":  {"yf": "TXP.L",  "slug": "touchstone-exploration-inc",     "name": "Touchstone Exploration"},
     "PMG":  {"yf": "PMG.L",  "slug": "parkmead-group-the-plc",         "name": "Parkmead Group"},
     "STAR": {"yf": "STAR.L", "slug": "star-energy-group-plc",          "name": "Star Energy Group"},
-    "RKH":  {"yf": "RKH.L",  "slug": "rockhopper-exploration-plc",     "name": "Rockhopper Exploration"},
 
-    # ── AET (Afentra) — slug NOT yet verified, add after manual check ───
-    # "AET": {"yf": "AET.L", "slug": "???",                            "name": "Afentra"},
+    # ── Tier 2 additions — £8m-£55m, smaller/less liquid ────────────────
+    "ENW":  {"yf": "ENW.L",  "slug": "enwell-energy-plc",              "name": "Enwell Energy"},
+    "CASP": {"yf": "CASP.L", "slug": "caspian-sunrise-plc",            "name": "Caspian Sunrise"},
+    "PXEN": {"yf": "PXEN.L", "slug": "prospex-energy-plc",             "name": "Prospex Energy"},
+    "EOG":  {"yf": "EOG.L",  "slug": "europa-oil-gas-holdings-plc",    "name": "Europa Oil & Gas"},
+    "ORCA": {"yf": "ORCA.L", "slug": "orcadian-energy-plc",            "name": "Orcadian Energy"},
+    "EPP":  {"yf": "EPP.L",  "slug": "energypathways-plc",             "name": "EnergyPathways"},
+    "SOU":  {"yf": "SOU.L",  "slug": "sound-energy-plc",               "name": "Sound Energy"},
+    "UOG":  {"yf": "UOG.L",  "slug": "united-oil-gas-plc",             "name": "United Oil & Gas"},
 }
 
 DEFAULT_TICKER = "MATD"
